@@ -32,6 +32,21 @@ describe("findUsage", () => {
   it("reports zero for unused packages", () => {
     expect(findUsage("vue", files).files).toBe(0);
   });
+
+  it("does not let an import clause span across earlier statements", () => {
+    const f = [
+      {
+        path: "src/x.ts",
+        content: `import React from "react";\nimport { useRouter } from "next/navigation";`,
+      },
+    ];
+    const next = findUsage("next", f);
+    expect(next.sites).toHaveLength(1);
+    expect(next.sites[0]!.line).toBe(2);
+    expect(next.sites[0]!.symbols).toEqual(["useRouter"]);
+    // and React is not mis-attributed to next
+    expect(next.sites[0]!.symbols).not.toContain("React");
+  });
 });
 
 describe("scoreRisk", () => {

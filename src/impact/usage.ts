@@ -68,7 +68,9 @@ function parseSymbols(clause: string): string[] {
 export function findUsage(pkg: string, files: SourceFile[]): UsageReport {
   const p = escapeRe(pkg);
   const spec = `['"]${p}(?:/[^'"]*)?['"]`;
-  const importFrom = new RegExp(`import\\s+([\\s\\S]*?)\\s+from\\s*${spec}`, "g");
+  // The binding clause is identifiers/braces/commas/* only — never quotes or
+  // semicolons — so the match cannot span across an earlier import statement.
+  const importFrom = new RegExp(`import\\s+([\\w$\\s,{}*]+?)\\s+from\\s*${spec}`, "g");
   const bareImport = new RegExp(`import\\s*${spec}`, "g");
   const requireCall = new RegExp(`require\\(\\s*${spec}\\s*\\)`, "g");
   const dynImport = new RegExp(`import\\(\\s*${spec}\\s*\\)`, "g");
