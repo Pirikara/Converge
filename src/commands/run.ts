@@ -12,8 +12,12 @@ import { resolveCandidate, type CandidateResolution } from "../core/apply.js";
 import { renderPrBody, renderPrTitle } from "../core/pr-body.js";
 import { evaluateSafety } from "../safety/gate.js";
 import type { SafetyVerdict } from "../safety/types.js";
+import { analyzeImpact, type ImpactReport } from "../impact/analyze.js";
+import { isSourceFile, type SourceFile } from "../impact/usage.js";
 import { fetchPackageMeta } from "../adapters/npm/registry.js";
 import { log } from "../logger.js";
+
+const SOURCE_FILE_CAP = 500;
 
 export interface RunOptions {
   apply?: boolean;
@@ -74,12 +78,27 @@ function printSafety(verdict: SafetyVerdict): void {
   }
 }
 
+function riskColor(risk: ImpactReport["risk"]["risk"]): (s: string) => string {
+  return risk === "high" ? pc.red : risk === "medium" ? pc.yellow : pc.green;
+}
+
+function printImpact(impact: ImpactReport): void {
+  const used =
+    impact.usage.files === 0
+      ? "not imported directly"
+      : `used in ${impact.usage.files} file(s)`;
+  process.stdout.write(
+    `  ${riskColor(impact.risk.risk)(`◆ impact: risk ${impact.risk.risk}`)} ${pc.dim(`(${used})`)}\n`,
+  );
+}
+
 async function openPr(
   gh: GitHubClient,
   ref: RepoRef,
   base: string,
   res: CandidateResolution,
   safety: SafetyVerdict,
+  impact: ImpactReport,
 ): Promise<void> {
   const branch = branchName(res.candidate);
   if (await gh.branchExists(ref, branch)) {
@@ -96,7 +115,7 @@ async function openPr(
     head: branch,
     base,
     title,
-    body: renderPrBody(res.candidate, res.outcome, safety),
+    body: renderPrBody(res.candidate, res.outcome, safety, impact),
   });
   process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
@@ -120,6 +139,19 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
     log.info(pc.green("no eligible updates ✓"));
     return 0;
   }
+
+  const sourceCache = new Map<string, SourceFile[]>();
+  const getSources = async (dir: string): Promise<SourceFile[]> => {
+    const cached = sourceCache.get(dir);
+    if (cached) return cached;
+    const files = await gh.fetchSourceFiles(ref, base, {
+      dirPrefix: dir,
+      predicate: isSourceFile,
+      cap: SOURCE_FILE_CAP,
+    });
+    sourceCache.set(dir, files);
+    return files;
+  };
 
   let resolved = 0;
   let unsolvable = 0;
@@ -157,9 +189,18 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       continue;
     }
     resolved++;
+
+    // F3 impact: usage mapping + risk over the consuming repo's source.
+    const cobumps =
+      res.outcome.status === "resolved-cobump"
+        ? res.outcome.changes.filter((c) => c.cobump).length
+        : 0;
+    const impact = analyzeImpact(candidate, await getSources(candidate.dir), cobumps, verdict.decision);
+    printImpact(impact);
+
     if (opts.apply) {
       try {
-        await openPr(gh, ref, base, res, verdict);
+        await openPr(gh, ref, base, res, verdict, impact);
       } catch (err) {
         log.error(`${candidate.name}: ${(err as Error).message}`);
       }

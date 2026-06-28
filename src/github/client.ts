@@ -96,6 +96,49 @@ export class GitHubClient {
       .sort();
   }
 
+  /**
+   * Fetch source files under `dirPrefix` matching `predicate`, capped at `cap`
+   * files, via the tree + blob API. Skips node_modules and oversized blobs.
+   */
+  async fetchSourceFiles(
+    ref: RepoRef,
+    branch: string,
+    opts: { dirPrefix: string; predicate: (path: string) => boolean; cap: number },
+  ): Promise<{ path: string; content: string }[]> {
+    const { data } = await this.octokit.git.getTree({
+      ...ref,
+      tree_sha: branch,
+      recursive: "true",
+    });
+    const prefix = opts.dirPrefix === "." ? "" : `${opts.dirPrefix.replace(/\/$/, "")}/`;
+    const blobs = data.tree
+      .filter(
+        (e) =>
+          e.type === "blob" &&
+          typeof e.path === "string" &&
+          e.path.startsWith(prefix) &&
+          !e.path.split("/").includes("node_modules") &&
+          opts.predicate(e.path) &&
+          (e.size ?? 0) < 1_000_000,
+      )
+      .slice(0, opts.cap);
+
+    const out: { path: string; content: string }[] = [];
+    const concurrency = 8;
+    for (let i = 0; i < blobs.length; i += concurrency) {
+      const batch = blobs.slice(i, i + concurrency);
+      const fetched = await Promise.all(
+        batch.map(async (b) => {
+          const blob = await this.octokit.git.getBlob({ ...ref, file_sha: b.sha! });
+          const content = Buffer.from(blob.data.content, "base64").toString("utf8");
+          return { path: b.path as string, content };
+        }),
+      );
+      out.push(...fetched);
+    }
+    return out;
+  }
+
   async getBranchSha(ref: RepoRef, branch: string): Promise<string> {
     const { data } = await this.octokit.git.getRef({
       ...ref,

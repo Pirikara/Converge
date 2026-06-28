@@ -1,8 +1,25 @@
 import type { UpdateCandidate } from "../adapters/types.js";
 import type { ResolveOutcome } from "../resolve/types.js";
 import type { SafetyVerdict } from "../safety/types.js";
+import type { ImpactReport } from "../impact/analyze.js";
 
 const REGISTRY_BASE = "https://www.npmjs.com/package";
+
+function renderImpact(impact: ImpactReport): string[] {
+  const { usage, risk } = impact;
+  const lines = ["### 📋 Impact (F3)", `- **Risk: ${risk.risk}** — ${risk.reasons.join("; ")}`];
+  if (usage.files === 0) {
+    lines.push(`- \`${usage.pkg}\` is not imported directly in this repo`);
+    return lines;
+  }
+  lines.push(`- used in **${usage.files} file(s)**, ${usage.sites.length} import site(s):`);
+  for (const s of usage.sites.slice(0, 10)) {
+    const syms = s.symbols.length ? ` — \`${s.symbols.join(", ")}\`` : "";
+    lines.push(`  - \`${s.file}:${s.line}\` (${s.kind})${syms}`);
+  }
+  if (usage.sites.length > 10) lines.push(`  - …and ${usage.sites.length - 10} more`);
+  return lines;
+}
 
 function renderSafety(verdict: SafetyVerdict): string[] {
   const lines = ["### ✅ Safety (F2)"];
@@ -30,10 +47,11 @@ export function renderPrBody(
   c: UpdateCandidate,
   outcome: ResolveOutcome,
   safety: SafetyVerdict,
+  impact: ImpactReport,
 ): string {
   const from = c.currentVersion ?? c.currentRange;
   const lines = [
-    `## SafeBump: ${c.name} ${from} → ${c.latestVersion}`,
+    `## SafeBump: ${c.name} ${from} → ${c.latestVersion}  ·  Risk: ${impact.risk.risk}`,
     "",
     "### 🔧 Resolution (F1)",
   ];
@@ -64,11 +82,9 @@ export function renderPrBody(
   }
 
   lines.push("", ...renderSafety(safety));
+  lines.push("", ...renderImpact(impact));
 
   lines.push(
-    "",
-    "### 📋 Impact (F3)",
-    "- _pending M3_ — breaking-change & usage mapping not yet attached",
     "",
     "### Links",
     `- [npm](${REGISTRY_BASE}/${c.name}) · [${c.name}@${c.latestVersion}](${REGISTRY_BASE}/${c.name}/v/${c.latestVersion})`,
