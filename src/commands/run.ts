@@ -3,9 +3,13 @@ import {
   GitHubClient,
   parseRepoRef,
   resolveToken,
+  type RepoRef,
 } from "../github/client.js";
-import { loadConfig } from "../config/load.js";
-import { planUpdates, type UpdatePlan, type UpdateType } from "../core/plan.js";
+import { ConfigSchema, type Config } from "../config/schema.js";
+import { stripJsonComments } from "../config/load.js";
+import { selectCandidates, branchName, type UpdateType } from "../core/plan.js";
+import { resolveCandidate, type CandidateResolution } from "../core/apply.js";
+import { renderPrBody, renderPrTitle } from "../core/pr-body.js";
 import { log } from "../logger.js";
 
 export interface RunOptions {
@@ -13,65 +17,79 @@ export interface RunOptions {
   token?: string;
   types?: string;
   limit?: string;
-  configDir?: string;
 }
 
 const VALID_TYPES: UpdateType[] = ["major", "minor", "patch"];
 
 function parseTypes(input: string | undefined): UpdateType[] {
   if (!input) return ["minor", "patch"];
-  const parts = input.split(",").map((s) => s.trim());
-  const types = parts.filter((t): t is UpdateType =>
-    VALID_TYPES.includes(t as UpdateType),
-  );
+  const types = input
+    .split(",")
+    .map((s) => s.trim())
+    .filter((t): t is UpdateType => VALID_TYPES.includes(t as UpdateType));
   return types.length > 0 ? types : ["minor", "patch"];
 }
 
-async function applyPlan(
-  gh: GitHubClient,
-  ref: ReturnType<typeof parseRepoRef>,
-  base: string,
-  plan: UpdatePlan,
-): Promise<string> {
-  if (await gh.branchExists(ref, plan.branch)) {
-    const existing = await gh.findOpenPr(ref, plan.branch);
-    return existing
-      ? `exists → PR #${existing} (skipped)`
-      : `branch exists, no open PR (skipped)`;
-  }
-  const baseSha = await gh.getBranchSha(ref, base);
-  await gh.createBranch(ref, plan.branch, baseSha);
-  await gh.putFile(ref, {
-    path: plan.manifestPath,
-    content: plan.newContent,
-    branch: plan.branch,
-    message: plan.title,
-    sha: plan.fileSha,
-  });
-  const pr = await gh.createPr(ref, {
-    head: plan.branch,
-    base,
-    title: plan.title,
-    body: plan.body,
-  });
-  return `${pc.green("created")} PR #${pr.number} → ${pr.url}`;
+async function loadRepoConfig(gh: GitHubClient, ref: RepoRef, base: string): Promise<Config> {
+  const file = await gh.getFile(ref, "safebump.json", base);
+  if (!file) return ConfigSchema.parse({});
+  return ConfigSchema.parse(JSON.parse(stripJsonComments(file.content)));
 }
 
-export async function runRun(
-  repoInput: string,
-  opts: RunOptions,
-): Promise<number> {
+function printResolution(res: CandidateResolution): void {
+  const c = res.candidate;
+  const header =
+    `${pc.bold(c.name)} ${pc.dim(c.currentVersion ?? c.currentRange)} → ` +
+    `${pc.bold(c.latestVersion)} [${c.updateType}] ${pc.dim(`(${c.dir})`)}`;
+  process.stdout.write(`\n${header}\n`);
+
+  if (res.outcome.status === "unsolvable") {
+    process.stdout.write(`  ${pc.red("✗ unresolvable")} — ${res.outcome.reason}\n`);
+    return;
+  }
+  const tag =
+    res.outcome.status === "resolved-cobump"
+      ? pc.yellow(`co-bump×${res.outcome.changes.length - 1}`)
+      : pc.green("direct");
+  process.stdout.write(`  ${pc.green("✓ resolved")} (${tag})\n`);
+  for (const ch of res.outcome.changes) {
+    const mark = ch.cobump ? pc.yellow("  + ") : "  • ";
+    process.stdout.write(`${mark}${ch.name}: ${ch.fromRange} → ${ch.toRange}\n`);
+  }
+}
+
+async function openPr(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  res: CandidateResolution,
+): Promise<void> {
+  const branch = branchName(res.candidate);
+  if (await gh.branchExists(ref, branch)) {
+    const existing = await gh.findOpenPr(ref, branch);
+    process.stdout.write(
+      `  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`,
+    );
+    return;
+  }
+  const baseSha = await gh.getBranchSha(ref, base);
+  const title = renderPrTitle(res.candidate, res.outcome);
+  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
+  const pr = await gh.createPr(ref, {
+    head: branch,
+    base,
+    title,
+    body: renderPrBody(res.candidate, res.outcome),
+  });
+  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+}
+
+export async function runRun(repoInput: string, opts: RunOptions): Promise<number> {
   const ref = parseRepoRef(repoInput);
-  const token = resolveToken(opts.token);
-  const gh = new GitHubClient(token);
+  const gh = new GitHubClient(resolveToken(opts.token));
 
-  // Repo-side config is fetched from the default branch; fall back to defaults.
   const base = await gh.getDefaultBranch(ref);
-  const cfgFile = await gh.getFile(ref, "safebump.json", base);
-  const { config } = cfgFile
-    ? await loadConfigFromString(cfgFile.content)
-    : { config: (await loadConfig(process.cwd())).config };
-
+  const config = await loadRepoConfig(gh, ref, base);
   const allow = parseTypes(opts.types);
   const limit = Math.max(1, Number(opts.limit ?? "5") || 5);
 
@@ -80,48 +98,35 @@ export async function runRun(
       `(limit ${limit}, ${opts.apply ? pc.red("APPLY") : pc.cyan("dry-run")})`,
   );
 
-  const { plans } = await planUpdates(gh, ref, config, { allow, limit });
-
-  if (plans.length === 0) {
+  const { selected } = await selectCandidates(gh, ref, config, { allow, limit });
+  if (selected.length === 0) {
     log.info(pc.green("no eligible updates ✓"));
     return 0;
   }
 
-  for (const plan of plans) {
-    const c = plan.candidate;
-    const header =
-      `${pc.bold(c.name)} ` +
-      `${pc.dim(c.currentVersion ?? c.currentRange)} → ${pc.bold(c.latestVersion)} ` +
-      `[${c.updateType}] ${pc.dim(`(${plan.manifestPath})`)}`;
-    if (!opts.apply) {
-      process.stdout.write(
-        `\n${header}\n  branch: ${plan.branch}\n  ${pc.dim("would create PR:")} ${plan.title}\n`,
-      );
+  let resolved = 0;
+  let unsolvable = 0;
+  for (const candidate of selected) {
+    const res = await resolveCandidate(gh, ref, base, candidate);
+    printResolution(res);
+    if (res.outcome.status === "unsolvable") {
+      unsolvable++;
       continue;
     }
-    try {
-      const result = await applyPlan(gh, ref, base, plan);
-      process.stdout.write(`\n${header}\n  ${result}\n`);
-    } catch (err) {
-      log.error(`${c.name}: ${(err as Error).message}`);
+    resolved++;
+    if (opts.apply) {
+      try {
+        await openPr(gh, ref, base, res);
+      } catch (err) {
+        log.error(`${candidate.name}: ${(err as Error).message}`);
+      }
     }
   }
+
   process.stdout.write("\n");
-
-  if (!opts.apply) {
-    log.info(
-      `${plans.length} update(s) planned. Re-run with ${pc.bold("--apply")} to open PRs.`,
-    );
-  }
+  log.info(
+    `${resolved} resolved, ${unsolvable} unresolvable` +
+      (opts.apply ? "" : ` — re-run with ${pc.bold("--apply")} to open PRs`),
+  );
   return 0;
-}
-
-// Small helper: parse config from a string via the existing loader's schema.
-async function loadConfigFromString(
-  content: string,
-): Promise<{ config: Awaited<ReturnType<typeof loadConfig>>["config"] }> {
-  const { stripJsonComments } = await import("../config/load.js");
-  const { ConfigSchema } = await import("../config/schema.js");
-  const parsed = ConfigSchema.parse(JSON.parse(stripJsonComments(content)));
-  return { config: parsed };
 }

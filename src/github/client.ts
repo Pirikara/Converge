@@ -149,6 +149,48 @@ export class GitHubClient {
     return data.commit.sha ?? "";
   }
 
+  /**
+   * Create a single commit containing multiple file changes on a new branch,
+   * branched from `baseSha`. Returns the new commit sha.
+   */
+  async commitFiles(
+    ref: RepoRef,
+    params: {
+      branch: string;
+      baseSha: string;
+      message: string;
+      files: { path: string; content: string }[];
+    },
+  ): Promise<string> {
+    const baseCommit = await this.octokit.git.getCommit({
+      ...ref,
+      commit_sha: params.baseSha,
+    });
+    const tree = await this.octokit.git.createTree({
+      ...ref,
+      base_tree: baseCommit.data.tree.sha,
+      tree: params.files.map((f) => ({
+        path: f.path,
+        mode: "100644",
+        type: "blob",
+        content: f.content,
+      })),
+    });
+    const commit = await this.octokit.git.createCommit({
+      ...ref,
+      message: params.message,
+      tree: tree.data.sha,
+      parents: [params.baseSha],
+    });
+    await this.octokit.git.createRef({
+      ...ref,
+      ref: `refs/heads/${params.branch}`,
+      sha: commit.data.sha,
+    });
+    log.debug(`committed ${params.files.length} file(s) to ${params.branch}`);
+    return commit.data.sha;
+  }
+
   /** Find an open PR whose head branch matches, if any. */
   async findOpenPr(ref: RepoRef, head: string): Promise<number | null> {
     const { data } = await this.octokit.pulls.list({
