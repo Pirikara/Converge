@@ -10,6 +10,9 @@ import { stripJsonComments } from "../config/load.js";
 import { selectCandidates, branchName, type UpdateType } from "../core/plan.js";
 import { resolveCandidate, type CandidateResolution } from "../core/apply.js";
 import { renderPrBody, renderPrTitle } from "../core/pr-body.js";
+import { evaluateSafety } from "../safety/gate.js";
+import type { SafetyVerdict } from "../safety/types.js";
+import { fetchPackageMeta } from "../adapters/npm/registry.js";
 import { log } from "../logger.js";
 
 export interface RunOptions {
@@ -37,12 +40,6 @@ async function loadRepoConfig(gh: GitHubClient, ref: RepoRef, base: string): Pro
 }
 
 function printResolution(res: CandidateResolution): void {
-  const c = res.candidate;
-  const header =
-    `${pc.bold(c.name)} ${pc.dim(c.currentVersion ?? c.currentRange)} → ` +
-    `${pc.bold(c.latestVersion)} [${c.updateType}] ${pc.dim(`(${c.dir})`)}`;
-  process.stdout.write(`\n${header}\n`);
-
   if (res.outcome.status === "unsolvable") {
     process.stdout.write(`  ${pc.red("✗ unresolvable")} — ${res.outcome.reason}\n`);
     return;
@@ -58,11 +55,31 @@ function printResolution(res: CandidateResolution): void {
   }
 }
 
+function printSafety(verdict: SafetyVerdict): void {
+  if (verdict.signals.length === 0) {
+    process.stdout.write(`  ${pc.green("✓ safety")} no known advisories, cooldown ok\n`);
+    return;
+  }
+  const color =
+    verdict.decision === "block"
+      ? pc.red
+      : verdict.decision === "hold"
+        ? pc.yellow
+        : verdict.decision === "warn"
+          ? pc.yellow
+          : pc.green;
+  process.stdout.write(`  ${color(`⚑ safety: ${verdict.decision}`)}\n`);
+  for (const s of verdict.signals) {
+    process.stdout.write(`    ${pc.dim(`- ${s.kind} (${s.severity}): ${s.detail}`)}\n`);
+  }
+}
+
 async function openPr(
   gh: GitHubClient,
   ref: RepoRef,
   base: string,
   res: CandidateResolution,
+  safety: SafetyVerdict,
 ): Promise<void> {
   const branch = branchName(res.candidate);
   if (await gh.branchExists(ref, branch)) {
@@ -79,7 +96,7 @@ async function openPr(
     head: branch,
     base,
     title,
-    body: renderPrBody(res.candidate, res.outcome),
+    body: renderPrBody(res.candidate, res.outcome, safety),
   });
   process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
@@ -106,7 +123,33 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
 
   let resolved = 0;
   let unsolvable = 0;
+  let blocked = 0;
   for (const candidate of selected) {
+    const header =
+      `\n${pc.bold(candidate.name)} ${pc.dim(candidate.currentVersion ?? candidate.currentRange)} → ` +
+      `${pc.bold(candidate.latestVersion)} [${candidate.updateType}] ${pc.dim(`(${candidate.dir})`)}`;
+    process.stdout.write(`${header}\n`);
+
+    // F2 gate first: never resolve/install a dangerous or held version.
+    const meta = await fetchPackageMeta(candidate.name);
+    const verdict = await evaluateSafety(
+      {
+        ecosystem: "npm",
+        name: candidate.name,
+        version: candidate.latestVersion,
+        publishedAt: meta.publishedAt[candidate.latestVersion],
+      },
+      config.safety,
+    );
+    printSafety(verdict);
+    if (verdict.decision === "block" || verdict.decision === "hold") {
+      blocked++;
+      process.stdout.write(
+        `  ${pc.red("⛔ skipped")} — ${verdict.decision === "block" ? "unsafe target" : "within cooldown"}\n`,
+      );
+      continue;
+    }
+
     const res = await resolveCandidate(gh, ref, base, candidate);
     printResolution(res);
     if (res.outcome.status === "unsolvable") {
@@ -116,7 +159,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
     resolved++;
     if (opts.apply) {
       try {
-        await openPr(gh, ref, base, res);
+        await openPr(gh, ref, base, res, verdict);
       } catch (err) {
         log.error(`${candidate.name}: ${(err as Error).message}`);
       }
@@ -125,7 +168,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
 
   process.stdout.write("\n");
   log.info(
-    `${resolved} resolved, ${unsolvable} unresolvable` +
+    `${resolved} resolved, ${blocked} blocked/held, ${unsolvable} unresolvable` +
       (opts.apply ? "" : ` — re-run with ${pc.bold("--apply")} to open PRs`),
   );
   return 0;

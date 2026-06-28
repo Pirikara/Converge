@@ -1,7 +1,24 @@
 import type { UpdateCandidate } from "../adapters/types.js";
 import type { ResolveOutcome } from "../resolve/types.js";
+import type { SafetyVerdict } from "../safety/types.js";
 
 const REGISTRY_BASE = "https://www.npmjs.com/package";
+
+function renderSafety(verdict: SafetyVerdict): string[] {
+  const lines = ["### ✅ Safety (F2)"];
+  if (verdict.signals.length === 0) {
+    lines.push("- ✅ no known OSV advisories; cooldown passed");
+    return lines;
+  }
+  const badge =
+    verdict.decision === "warn" ? "⚠️ proceeding with warnings" : `decision: **${verdict.decision}**`;
+  lines.push(`- ${badge}`);
+  for (const s of verdict.signals) {
+    const ref = s.url ? ` ([${s.id}](${s.url}))` : "";
+    lines.push(`  - \`${s.kind}\` (${s.severity}): ${s.detail}${ref}`);
+  }
+  return lines;
+}
 
 /**
  * Render the PR body from the resolution outcome. M1 reports the resolved
@@ -12,6 +29,7 @@ const REGISTRY_BASE = "https://www.npmjs.com/package";
 export function renderPrBody(
   c: UpdateCandidate,
   outcome: ResolveOutcome,
+  safety: SafetyVerdict,
 ): string {
   const from = c.currentVersion ?? c.currentRange;
   const lines = [
@@ -45,10 +63,9 @@ export function renderPrBody(
     }
   }
 
+  lines.push("", ...renderSafety(safety));
+
   lines.push(
-    "",
-    "### ✅ Safety (F2)",
-    "- _pending M2_ — malware / advisory / cooldown checks not yet enforced",
     "",
     "### 📋 Impact (F3)",
     "- _pending M3_ — breaking-change & usage mapping not yet attached",
