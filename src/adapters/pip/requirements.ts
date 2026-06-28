@@ -13,6 +13,30 @@ export function parsePin(spec: string): string | null {
   return m ? m[1]! : null;
 }
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Replace a dependency's `==` pin in requirements.txt text with a minimal edit
+ * that preserves extras, the rest of the line, and formatting.
+ */
+export function editRequirementPin(
+  content: string,
+  name: string,
+  fromPin: string,
+  toVersion: string,
+): string {
+  const re = new RegExp(
+    `^(\\s*${escapeRe(name)}(?:\\[[^\\]]*\\])?\\s*==\\s*)${escapeRe(fromPin)}(\\b.*)$`,
+    "m",
+  );
+  if (!re.test(content)) {
+    throw new Error(`could not locate ${name}==${fromPin} in requirements.txt`);
+  }
+  return content.replace(re, `$1${toVersion}$2`);
+}
+
 /**
  * Parse a requirements.txt into dependency entries (best-effort, PEP 508-lite).
  * Skips option lines (-r/-e/--hash/-c/index-url), URL/VCS requirements, and

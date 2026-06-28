@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseRequirements, parsePin } from "../src/adapters/pip/requirements.js";
+import { parseRequirements, parsePin, editRequirementPin } from "../src/adapters/pip/requirements.js";
 import { PipAdapter } from "../src/adapters/pip/index.js";
 
 describe("parseRequirements", () => {
@@ -36,6 +36,22 @@ some-pkg @ https://example.com/some-pkg.whl
     expect(parsePin("==1.0.8")).toBe("1.0.8");
     expect(parsePin(">=1.0.0")).toBeNull();
     expect(parsePin("==1.0,<2.0")).toBeNull();
+  });
+});
+
+describe("editRequirementPin", () => {
+  const content = "langchain==1.0.8\nlangchain-community==0.4.1\nuvicorn[standard]==0.29.0\n";
+
+  it("edits the targeted pin only, preserving others and extras", () => {
+    const out = editRequirementPin(content, "langchain", "1.0.8", "1.3.11");
+    expect(out).toContain("langchain==1.3.11");
+    expect(out).toContain("langchain-community==0.4.1"); // untouched (prefix match avoided)
+    const ext = editRequirementPin(content, "uvicorn", "0.29.0", "0.30.0");
+    expect(ext).toContain("uvicorn[standard]==0.30.0");
+  });
+
+  it("throws when the pin is absent", () => {
+    expect(() => editRequirementPin(content, "langchain", "9.9.9", "1.3.11")).toThrow();
   });
 });
 
