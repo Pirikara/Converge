@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { runScan } from "./commands/scan.js";
 import { runRun } from "./commands/run.js";
+import { runResolve } from "./commands/resolve.js";
 import { setLogLevel } from "./logger.js";
 import { createRequire } from "node:module";
 
@@ -45,6 +46,19 @@ program
       types: opts.types as string,
       limit: opts.limit as string,
     });
+    process.exitCode = code;
+  });
+
+program
+  .command("resolve")
+  .description("Resolve a single dependency bump (regenerates lockfile, no code run)")
+  .argument("<dir>", "path to the package.json directory")
+  .argument("<pkg>", "dependency name to update")
+  .argument("<version>", "target version (e.g. 19.0.0)")
+  .option("--write", "write updated package.json + lockfile back to dir", false)
+  .action(async (dir: string, pkg: string, version: string, opts: { write: boolean }) => {
+    if (program.opts().verbose) setLogLevel("debug");
+    const code = await runResolve(dir, pkg, version, { write: opts.write });
     process.exitCode = code;
   });
 
