@@ -11,6 +11,7 @@ import { selectCandidates, branchName, type UpdateType } from "../core/plan.js";
 import { resolveCandidate, type CandidateResolution } from "../core/apply.js";
 import { renderPrBody, renderPrTitle } from "../core/pr-body.js";
 import { evaluateSafety } from "../safety/gate.js";
+import { provenanceStatus } from "../safety/provenance.js";
 import type { SafetyVerdict } from "../safety/types.js";
 import { analyzeImpact, type ImpactReport } from "../impact/analyze.js";
 import { isSourceFile, type SourceFile } from "../impact/usage.js";
@@ -182,6 +183,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
         name: candidate.name,
         version: candidate.latestVersion,
         publishedAt: meta.publishedAt[candidate.latestVersion],
+        provenance: provenanceStatus(meta, candidate.currentVersion, candidate.latestVersion),
       },
       config.safety,
     );

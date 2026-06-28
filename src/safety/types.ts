@@ -6,6 +6,7 @@ export type SignalKind =
   | "malware" // OSV MAL-* advisory
   | "vulnerability" // OSV non-malware advisory
   | "cooldown" // version published too recently
+  | "provenance-downgrade" // target lost provenance the package had established
   | "allowlisted"; // explicitly permitted in config
 
 export type Severity = "critical" | "high" | "moderate" | "low" | "info";

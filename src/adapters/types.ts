@@ -55,6 +55,8 @@ export interface PackageMeta {
   deprecated: string | null;
   /** Deprecation message keyed by version (only deprecated versions present). */
   deprecations: Record<string, string>;
+  /** Whether each version was published with npm provenance attestation. */
+  provenance: Record<string, boolean>;
   /** Source repository URL from the latest manifest, if declared. */
   repositoryUrl: string | null;
 }

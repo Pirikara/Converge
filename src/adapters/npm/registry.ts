@@ -8,6 +8,9 @@ interface RegistryVersion {
   deprecated?: string;
   peerDependencies?: Record<string, string>;
   repository?: { url?: string } | string;
+  dist?: {
+    attestations?: { provenance?: { predicateType?: string } };
+  };
 }
 
 interface RegistryPackument {
@@ -94,10 +97,14 @@ export function fetchPackageMeta(
 
     const publishedAt: Record<string, string> = {};
     const deprecations: Record<string, string> = {};
+    const provenance: Record<string, boolean> = {};
     for (const v of versions) {
       if (time[v]) publishedAt[v] = time[v]!;
       const dep = versionsMap[v]?.deprecated;
       if (typeof dep === "string" && dep.length > 0) deprecations[v] = dep;
+      provenance[v] = Boolean(
+        versionsMap[v]?.dist?.attestations?.provenance?.predicateType,
+      );
     }
 
     const repo = versionsMap[latest]?.repository;
@@ -110,6 +117,7 @@ export function fetchPackageMeta(
       publishedAt,
       deprecated: deprecations[latest] ?? null,
       deprecations,
+      provenance,
       repositoryUrl,
     };
   })();

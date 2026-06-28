@@ -14,6 +14,12 @@ export interface SafetyInput {
   version: string;
   /** ISO publish time of the target version, when known (for cooldown). */
   publishedAt?: string;
+  /** Provenance comparison vs the trusted baseline (F2.2), when available. */
+  provenance?: {
+    targetHasProvenance: boolean;
+    baselineHadProvenance: boolean;
+    baselineVersion?: string;
+  };
 }
 
 export interface SafetyDeps {
@@ -73,6 +79,19 @@ export async function evaluateSafety(
       url: v.url,
     });
     decision = worst(decision, vulnDecision(v, policy));
+  }
+
+  // F2.2: provenance/trusted-publishing downgrade relative to the baseline.
+  const prov = input.provenance;
+  if (prov && prov.baselineHadProvenance && !prov.targetHasProvenance) {
+    signals.push({
+      kind: "provenance-downgrade",
+      severity: "high",
+      detail:
+        `provenance present on ${prov.baselineVersion ?? "a prior version"} ` +
+        `but missing on target ${input.version} (possible hijacked publish)`,
+    });
+    decision = worst(decision, policy.onSuspicious);
   }
 
   if (input.publishedAt && policy.cooldownDays > 0) {
