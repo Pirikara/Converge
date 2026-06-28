@@ -1,0 +1,65 @@
+/**
+ * Ecosystem adapter contract (SPEC §4.4).
+ * M0 implements the inventory slice: parseManifests + listOutdated + metadata.
+ * Resolution / install / test arrive in M1.
+ */
+
+export type EcosystemId = "npm" | "pip" | "gomod" | "cargo";
+
+export type DependencyKind =
+  | "prod"
+  | "dev"
+  | "peer"
+  | "optional";
+
+export interface DependencyEntry {
+  name: string;
+  /** Declared version range as written in the manifest (e.g. "^1.2.0"). */
+  range: string;
+  kind: DependencyKind;
+}
+
+export interface Manifest {
+  ecosystem: EcosystemId;
+  /** Absolute path to the manifest file (e.g. package.json). */
+  path: string;
+  /** Directory containing the manifest, relative to repo root. */
+  dir: string;
+  dependencies: DependencyEntry[];
+}
+
+export interface UpdateCandidate {
+  ecosystem: EcosystemId;
+  manifestPath: string;
+  dir: string;
+  name: string;
+  kind: DependencyKind;
+  /** Current range from the manifest. */
+  currentRange: string;
+  /** Highest version currently satisfying the range, if resolvable. */
+  currentVersion: string | null;
+  /** Latest published version (per registry dist-tag `latest`). */
+  latestVersion: string;
+  /** semver delta of currentVersion -> latestVersion. */
+  updateType: "major" | "minor" | "patch" | "none" | "unknown";
+}
+
+export interface PackageMeta {
+  name: string;
+  latest: string;
+  /** All published versions, ascending by publish time when available. */
+  versions: string[];
+  /** ISO timestamp per version, when the registry exposes it. */
+  publishedAt: Record<string, string>;
+  deprecated: string | null;
+}
+
+export interface EcosystemAdapter {
+  id: EcosystemId;
+  /** Glob/filename markers that identify this ecosystem's manifests. */
+  manifestFilenames: string[];
+
+  parseManifest(absPath: string, repoRoot: string): Promise<Manifest>;
+  listOutdated(manifest: Manifest): Promise<UpdateCandidate[]>;
+  fetchPackageMeta(name: string): Promise<PackageMeta>;
+}
