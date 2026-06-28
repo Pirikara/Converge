@@ -51,7 +51,12 @@ export interface PackageMeta {
   versions: string[];
   /** ISO timestamp per version, when the registry exposes it. */
   publishedAt: Record<string, string>;
+  /** Deprecation message of the latest version, if any. */
   deprecated: string | null;
+  /** Deprecation message keyed by version (only deprecated versions present). */
+  deprecations: Record<string, string>;
+  /** Source repository URL from the latest manifest, if declared. */
+  repositoryUrl: string | null;
 }
 
 export interface EcosystemAdapter {

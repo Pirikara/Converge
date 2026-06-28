@@ -2,8 +2,22 @@ import type { UpdateCandidate } from "../adapters/types.js";
 import type { ResolveOutcome } from "../resolve/types.js";
 import type { SafetyVerdict } from "../safety/types.js";
 import type { ImpactReport } from "../impact/analyze.js";
+import type { DeprecationFinding } from "../deprecation/detect.js";
 
 const REGISTRY_BASE = "https://www.npmjs.com/package";
+
+function renderDeprecation(findings: DeprecationFinding[]): string[] {
+  const lines = ["### ⏳ Deprecation (F4)"];
+  if (findings.length === 0) {
+    lines.push("- ✅ not deprecated; actively maintained");
+    return lines;
+  }
+  for (const f of findings) {
+    const rep = f.replacement ? ` → consider **${f.replacement}**` : "";
+    lines.push(`- ${f.severity === "warn" ? "⚠️" : "ℹ️"} ${f.detail}${rep}`);
+  }
+  return lines;
+}
 
 function renderImpact(impact: ImpactReport): string[] {
   const { usage, risk } = impact;
@@ -48,6 +62,7 @@ export function renderPrBody(
   outcome: ResolveOutcome,
   safety: SafetyVerdict,
   impact: ImpactReport,
+  deprecation: DeprecationFinding[],
 ): string {
   const from = c.currentVersion ?? c.currentRange;
   const lines = [
@@ -83,6 +98,7 @@ export function renderPrBody(
 
   lines.push("", ...renderSafety(safety));
   lines.push("", ...renderImpact(impact));
+  lines.push("", ...renderDeprecation(deprecation));
 
   lines.push(
     "",

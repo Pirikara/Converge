@@ -14,10 +14,12 @@ import { evaluateSafety } from "../safety/gate.js";
 import type { SafetyVerdict } from "../safety/types.js";
 import { analyzeImpact, type ImpactReport } from "../impact/analyze.js";
 import { isSourceFile, type SourceFile } from "../impact/usage.js";
+import { detectDeprecation, type DeprecationFinding } from "../deprecation/detect.js";
 import { fetchPackageMeta } from "../adapters/npm/registry.js";
 import { log } from "../logger.js";
 
 const SOURCE_FILE_CAP = 500;
+const STALE_DAYS = 365 * 2;
 
 export interface RunOptions {
   apply?: boolean;
@@ -92,6 +94,15 @@ function printImpact(impact: ImpactReport): void {
   );
 }
 
+function printDeprecation(findings: DeprecationFinding[]): void {
+  if (findings.length === 0) return;
+  for (const f of findings) {
+    const c = f.severity === "warn" ? pc.yellow : pc.dim;
+    const rep = f.replacement ? ` → ${f.replacement}` : "";
+    process.stdout.write(`  ${c(`⏳ ${f.kind}: ${f.detail}${rep}`)}\n`);
+  }
+}
+
 async function openPr(
   gh: GitHubClient,
   ref: RepoRef,
@@ -99,6 +110,7 @@ async function openPr(
   res: CandidateResolution,
   safety: SafetyVerdict,
   impact: ImpactReport,
+  deprecation: DeprecationFinding[],
 ): Promise<void> {
   const branch = branchName(res.candidate);
   if (await gh.branchExists(ref, branch)) {
@@ -115,7 +127,7 @@ async function openPr(
     head: branch,
     base,
     title,
-    body: renderPrBody(res.candidate, res.outcome, safety, impact),
+    body: renderPrBody(res.candidate, res.outcome, safety, impact, deprecation),
   });
   process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
@@ -198,9 +210,17 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
     const impact = analyzeImpact(candidate, await getSources(candidate.dir), cobumps, verdict.decision);
     printImpact(impact);
 
+    // F4 deprecation/abandonment (from the registry metadata already fetched).
+    const deprecation = detectDeprecation(
+      { name: candidate.name, currentVersion: candidate.currentVersion, targetVersion: candidate.latestVersion },
+      meta,
+      { staleDays: STALE_DAYS, now: Date.now() },
+    );
+    printDeprecation(deprecation);
+
     if (opts.apply) {
       try {
-        await openPr(gh, ref, base, res, verdict, impact);
+        await openPr(gh, ref, base, res, verdict, impact, deprecation);
       } catch (err) {
         log.error(`${candidate.name}: ${(err as Error).message}`);
       }

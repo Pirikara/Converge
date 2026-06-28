@@ -7,6 +7,7 @@ const DEFAULT_REGISTRY = process.env.SAFEBUMP_NPM_REGISTRY ?? "https://registry.
 interface RegistryVersion {
   deprecated?: string;
   peerDependencies?: Record<string, string>;
+  repository?: { url?: string } | string;
 }
 
 interface RegistryPackument {
@@ -92,16 +93,24 @@ export function fetchPackageMeta(
     const latest = doc["dist-tags"]?.latest ?? versions.at(-1) ?? "";
 
     const publishedAt: Record<string, string> = {};
+    const deprecations: Record<string, string> = {};
     for (const v of versions) {
       if (time[v]) publishedAt[v] = time[v]!;
+      const dep = versionsMap[v]?.deprecated;
+      if (typeof dep === "string" && dep.length > 0) deprecations[v] = dep;
     }
+
+    const repo = versionsMap[latest]?.repository;
+    const repositoryUrl = typeof repo === "string" ? repo : (repo?.url ?? null);
 
     return {
       name: doc.name ?? name,
       latest,
       versions,
       publishedAt,
-      deprecated: versionsMap[latest]?.deprecated ?? null,
+      deprecated: deprecations[latest] ?? null,
+      deprecations,
+      repositoryUrl,
     };
   })();
 
