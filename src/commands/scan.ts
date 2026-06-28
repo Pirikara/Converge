@@ -59,7 +59,7 @@ export async function runScan(dir: string, opts: ScanOptions): Promise<number> {
       process.stdout.write(
         `  ${c.name.padEnd(nameW)}  ` +
           `${pc.dim(from)} ${pc.dim("→")} ${pc.bold(c.latestVersion)}  ` +
-          `[${colorType(c.updateType)}] ${pc.dim(c.kind)}\n`,
+          `[${colorType(c.updateType)}] ${pc.dim(`${c.ecosystem} ${c.kind}`)}\n`,
       );
     }
   }
