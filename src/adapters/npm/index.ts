@@ -46,6 +46,11 @@ export class NpmAdapter implements EcosystemAdapter {
 
   async parseManifest(absPath: string, repoRoot: string): Promise<Manifest> {
     const raw = await readFile(absPath, "utf8");
+    return this.parseManifestContent(raw, absPath, repoRoot);
+  }
+
+  /** Parse a manifest from its raw text (used for remote/in-memory files). */
+  parseManifestContent(raw: string, absPath: string, repoRoot: string): Manifest {
     const pkg = JSON.parse(raw) as PackageJson;
     const deps: DependencyEntry[] = [];
     const add = (

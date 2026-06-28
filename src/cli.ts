@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { runScan } from "./commands/scan.js";
+import { runRun } from "./commands/run.js";
 import { setLogLevel } from "./logger.js";
 import { createRequire } from "node:module";
 
@@ -25,6 +26,25 @@ program
   .action(async (dir: string, opts: { json: boolean }) => {
     if (program.opts().verbose) setLogLevel("debug");
     const code = await runScan(dir, { json: opts.json });
+    process.exitCode = code;
+  });
+
+program
+  .command("run")
+  .description("Plan and (with --apply) open update PRs for a GitHub repository")
+  .argument("<repo>", "target repository as owner/repo or GitHub URL")
+  .option("--apply", "actually create branches and PRs (default: dry-run)", false)
+  .option("--token <token>", "GitHub token (else SAFEBUMP_TOKEN / GITHUB_TOKEN)")
+  .option("--types <list>", "comma-separated bump types to allow", "minor,patch")
+  .option("--limit <n>", "max PRs to plan in one run", "5")
+  .action(async (repo: string, opts: Record<string, string | boolean>) => {
+    if (program.opts().verbose) setLogLevel("debug");
+    const code = await runRun(repo, {
+      apply: opts.apply as boolean,
+      token: opts.token as string | undefined,
+      types: opts.types as string,
+      limit: opts.limit as string,
+    });
     process.exitCode = code;
   });
 
