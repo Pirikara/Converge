@@ -28,6 +28,30 @@ export function isPythonSourceFile(path: string): boolean {
   return /\.py$/.test(path);
 }
 
+export function isGoSourceFile(path: string): boolean {
+  return /\.go$/.test(path);
+}
+
+/**
+ * Find where a Go module is imported across .go files (F3.3 for Go). Go imports
+ * use the full module path (or a subpackage) in quotes, e.g. `import "M/sub"`.
+ */
+export function findGoUsage(modulePath: string, files: SourceFile[]): UsageReport {
+  const re = new RegExp(`"(${escapeRe(modulePath)}(?:/[^"]*)?)"`, "g");
+  const sites: ImportSite[] = [];
+  const filesWith = new Set<string>();
+  for (const f of files) {
+    let m: RegExpExecArray | null;
+    re.lastIndex = 0;
+    while ((m = re.exec(f.content))) {
+      sites.push({ file: f.path, line: lineOf(f.content, m.index), symbols: [], kind: "import" });
+      filesWith.add(f.path);
+    }
+  }
+  sites.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+  return { pkg: modulePath, files: filesWith.size, sites };
+}
+
 /**
  * Candidate Python import roots for a PyPI distribution name. The distribution
  * name often differs from the import name (e.g. PyYAML→yaml), which we can't

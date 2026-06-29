@@ -1,6 +1,7 @@
 import path from "node:path";
 import { NpmAdapter } from "../adapters/npm/index.js";
 import { PipAdapter } from "../adapters/pip/index.js";
+import { GoAdapter } from "../adapters/gomod/index.js";
 import type { EcosystemAdapter, UpdateCandidate } from "../adapters/types.js";
 import type { Config } from "../config/schema.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
@@ -44,6 +45,9 @@ export async function selectCandidates(
   }
   if (config.ecosystems.pip.enabled) {
     ecosystems.push({ adapter: new PipAdapter(), dirs: config.ecosystems.pip.directories });
+  }
+  if (config.ecosystems.gomod.enabled) {
+    ecosystems.push({ adapter: new GoAdapter(), dirs: config.ecosystems.gomod.directories });
   }
 
   const selected: UpdateCandidate[] = [];

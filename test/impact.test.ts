@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findUsage, findPythonUsage } from "../src/impact/usage.js";
+import { findUsage, findPythonUsage, findGoUsage } from "../src/impact/usage.js";
 import { scoreRisk } from "../src/impact/risk.js";
 
 describe("findUsage", () => {
@@ -91,5 +91,17 @@ describe("scoreRisk", () => {
   it("raises risk on safety warnings", () => {
     const r = scoreRisk({ updateType: "patch", usageFiles: 1, cobumps: 0, safety: "warn" });
     expect(r.risk).toBe("medium");
+  });
+});
+
+describe("findGoUsage", () => {
+  const files = [
+    { path: "main.go", content: 'import (\n\t"fmt"\n\t"github.com/pkg/errors"\n)\n' },
+    { path: "sub.go", content: 'import "github.com/pkg/errors/x"\n' },
+    { path: "no.go", content: 'import "github.com/other/lib"\n' },
+  ];
+  it("matches the module path and subpackages", () => {
+    const u = findGoUsage("github.com/pkg/errors", files);
+    expect(u.files).toBe(2);
   });
 });

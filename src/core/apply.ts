@@ -5,6 +5,7 @@ import { bumpRange } from "../adapters/npm/range.js";
 import type { UpdateCandidate } from "../adapters/types.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
 import { resolvePipUpdate } from "../resolve/pip.js";
+import { resolveGoModule } from "../resolve/go-cli.js";
 import { getResolver } from "../resolve/npm-family.js";
 import type { NpmPackageManager } from "../resolve/pm-detect.js";
 import { cleanupWorkdir } from "../resolve/workdir.js";
@@ -121,10 +122,43 @@ async function resolvePip(
   }
 }
 
+async function resolveGo(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  candidate: UpdateCandidate,
+): Promise<CandidateResolution> {
+  const dir = candidate.dir;
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const workdir = await mkdtemp(path.join(tmpdir(), "safebump-go-"));
+  try {
+    const gomod = await gh.getFile(ref, `${prefix}go.mod`, base);
+    if (!gomod) throw new Error(`go.mod not found in ${dir}`);
+    await writeFile(path.join(workdir, "go.mod"), gomod.content);
+    const gosum = await gh.getFile(ref, `${prefix}go.sum`, base);
+    if (gosum) await writeFile(path.join(workdir, "go.sum"), gosum.content);
+
+    const r = await resolveGoModule(workdir, candidate.name, candidate.latestVersion);
+    if (!r.ok) {
+      return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: r.stderr.split("\n").slice(-4).join("\n") };
+    }
+    return {
+      candidate,
+      status: "resolved",
+      changes: [{ name: candidate.name, fromRange: candidate.currentRange, toRange: candidate.latestVersion, cobump: false }],
+      repoFiles: r.files.map((f) => ({ path: `${prefix}${f.name}`, content: f.content })),
+      cobumps: 0,
+      warnings: [],
+    };
+  } finally {
+    await cleanupWorkdir(workdir);
+  }
+}
+
 /**
  * Resolve a candidate against the live registry, dispatching by ecosystem.
- * npm: package-lock-only ladder (+ co-bump); pip: uv compile (--no-build).
- * No package code is executed in either path.
+ * npm: package-lock-only ladder (+ co-bump); pip: uv compile (--no-build);
+ * gomod: go get (module mode). No package code is executed in any path.
  */
 export async function resolveCandidate(
   gh: GitHubClient,
@@ -134,7 +168,7 @@ export async function resolveCandidate(
   pm: NpmPackageManager = "npm",
 ): Promise<CandidateResolution> {
   log.debug(`resolving ${candidate.ecosystem} ${candidate.name} in ${candidate.dir} (pm=${pm})`);
-  return candidate.ecosystem === "pip"
-    ? resolvePip(gh, ref, base, candidate)
-    : resolveNpmFamily(gh, ref, base, candidate, pm);
+  if (candidate.ecosystem === "pip") return resolvePip(gh, ref, base, candidate);
+  if (candidate.ecosystem === "gomod") return resolveGo(gh, ref, base, candidate);
+  return resolveNpmFamily(gh, ref, base, candidate, pm);
 }

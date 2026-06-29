@@ -14,7 +14,7 @@ import { evaluateSafety } from "../safety/gate.js";
 import { provenanceStatus } from "../safety/provenance.js";
 import type { SafetyVerdict } from "../safety/types.js";
 import { analyzeImpact, type ImpactReport } from "../impact/analyze.js";
-import { isSourceFile, isPythonSourceFile, type SourceFile } from "../impact/usage.js";
+import { isSourceFile, isPythonSourceFile, isGoSourceFile, type SourceFile } from "../impact/usage.js";
 import { detectDeprecation, type DeprecationFinding } from "../deprecation/detect.js";
 import {
   decidePackageManager,
@@ -23,8 +23,34 @@ import {
 } from "../resolve/pm-detect.js";
 import { fetchPackageMeta } from "../adapters/npm/registry.js";
 import { fetchPyPiMeta } from "../adapters/pip/pypi.js";
-import type { PackageMeta, UpdateCandidate } from "../adapters/types.js";
+import { fetchGoMeta } from "../adapters/gomod/proxy.js";
+import type { EcosystemId, PackageMeta, UpdateCandidate } from "../adapters/types.js";
 import { log } from "../logger.js";
+
+const OSV_ECOSYSTEM: Record<EcosystemId, string> = {
+  npm: "npm",
+  pip: "PyPI",
+  gomod: "Go",
+  rubygems: "RubyGems",
+  cargo: "crates.io",
+};
+
+function getMeta(c: UpdateCandidate): Promise<PackageMeta> {
+  if (c.ecosystem === "pip") return fetchPyPiMeta(c.name);
+  if (c.ecosystem === "gomod") return fetchGoMeta(c.name);
+  return fetchPackageMeta(c.name);
+}
+
+function sourcePredicate(c: UpdateCandidate): (p: string) => boolean {
+  if (c.ecosystem === "pip") return isPythonSourceFile;
+  if (c.ecosystem === "gomod") return isGoSourceFile;
+  return isSourceFile;
+}
+
+/** OSV indexes Go versions without the leading `v`. */
+function osvVersion(c: UpdateCandidate): string {
+  return c.ecosystem === "gomod" ? c.latestVersion.replace(/^v/, "") : c.latestVersion;
+}
 
 const PROBE_LOCKFILES = [
   "pnpm-lock.yaml",
@@ -180,15 +206,12 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
     if (cached) return cached;
     const files = await gh.fetchSourceFiles(ref, base, {
       dirPrefix: c.dir,
-      predicate: c.ecosystem === "pip" ? isPythonSourceFile : isSourceFile,
+      predicate: sourcePredicate(c),
       cap: SOURCE_FILE_CAP,
     });
     sourceCache.set(key, files);
     return files;
   };
-
-  const getMeta = (c: UpdateCandidate): Promise<PackageMeta> =>
-    c.ecosystem === "pip" ? fetchPyPiMeta(c.name) : fetchPackageMeta(c.name);
 
   // Detect the package manager per directory so we never write a foreign
   // lockfile (e.g. a package-lock.json into a pnpm repo).
@@ -244,9 +267,9 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
     const meta = await getMeta(candidate);
     const verdict = await evaluateSafety(
       {
-        ecosystem: candidate.ecosystem === "pip" ? "PyPI" : "npm",
+        ecosystem: OSV_ECOSYSTEM[candidate.ecosystem],
         name: candidate.name,
-        version: candidate.latestVersion,
+        version: osvVersion(candidate),
         publishedAt: meta.publishedAt[candidate.latestVersion],
         provenance:
           candidate.ecosystem === "npm"
