@@ -1,5 +1,6 @@
 export type NpmPackageManager = "npm" | "yarn" | "pnpm" | "bun";
 
+// Yarn Classic (v1) is intentionally unsupported (deprecated). yarn = Berry.
 /** Package managers we can currently resolve a lockfile for. */
 export const RESOLVABLE_PACKAGE_MANAGERS = new Set<NpmPackageManager>([
   "npm",
