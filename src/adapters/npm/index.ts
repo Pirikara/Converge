@@ -9,7 +9,10 @@ import type {
   UpdateCandidate,
 } from "../types.js";
 import { fetchPackageMeta } from "./registry.js";
+import { getVersioning } from "../../versioning/index.js";
 import { log } from "../../logger.js";
+
+const ver = getVersioning("semver");
 
 interface PackageJson {
   dependencies?: Record<string, string>;
@@ -27,17 +30,9 @@ function isResolvableRange(range: string): boolean {
   return semver.validRange(range) != null;
 }
 
-function classifyUpdate(
-  from: string | null,
-  to: string,
-): UpdateCandidate["updateType"] {
+function classifyUpdate(from: string | null, to: string): UpdateCandidate["updateType"] {
   if (!from) return "unknown";
-  if (semver.eq(from, to)) return "none";
-  const diff = semver.diff(from, to);
-  if (diff === "major" || diff === "premajor") return "major";
-  if (diff === "minor" || diff === "preminor") return "minor";
-  if (diff == null) return "none";
-  return "patch";
+  return ver.diff(from, to);
 }
 
 export class NpmAdapter implements EcosystemAdapter {
@@ -89,18 +84,13 @@ export class NpmAdapter implements EcosystemAdapter {
         const meta = await fetchPackageMeta(dep.name);
         if (!meta.latest) return null;
 
-        const stable = meta.versions.filter(
-          (v) => semver.valid(v) && !semver.prerelease(v),
-        );
-        const currentVersion =
-          semver.maxSatisfying(stable, dep.range, { includePrerelease: false }) ??
-          null;
+        const currentVersion = ver.maxSatisfying(meta.versions, dep.range);
 
         // Outdated only when latest is strictly newer than what the range allows.
-        if (currentVersion && semver.gte(currentVersion, meta.latest)) {
+        if (currentVersion && ver.compare(currentVersion, meta.latest) >= 0) {
           return null;
         }
-        if (!currentVersion && !semver.valid(meta.latest)) {
+        if (!currentVersion && !ver.isValid(meta.latest)) {
           return null;
         }
 

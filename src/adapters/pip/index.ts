@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import semver from "semver";
 import type {
   EcosystemAdapter,
   Manifest,
@@ -9,25 +8,20 @@ import type {
 } from "../types.js";
 import { parseRequirements } from "./requirements.js";
 import { fetchPyPiMeta } from "./pypi.js";
+import { getVersioning } from "../../versioning/index.js";
 import { log } from "../../logger.js";
 
-/** Compare two PEP 440-ish versions via semver, tolerant of non-semver input. */
+const pep440 = getVersioning("pep440");
+
 function classify(from: string, to: string): UpdateCandidate["updateType"] {
-  const a = semver.coerce(from);
-  const b = semver.coerce(to);
-  if (!a || !b) return from === to ? "none" : "unknown";
-  if (semver.eq(a, b)) return "none";
-  if (semver.gt(a, b)) return "none"; // not an upgrade
-  const diff = semver.diff(a, b);
-  if (diff === "major" || diff === "premajor") return "major";
-  if (diff === "minor" || diff === "preminor") return "minor";
-  return "patch";
+  if (pep440.isValid(from) && pep440.isValid(to) && pep440.compare(to, from) <= 0) {
+    return "none"; // not an upgrade
+  }
+  return pep440.diff(from, to);
 }
 
 function isNewer(from: string, to: string): boolean {
-  const a = semver.coerce(from);
-  const b = semver.coerce(to);
-  if (a && b) return semver.gt(b, a);
+  if (pep440.isValid(from) && pep440.isValid(to)) return pep440.isGreaterThan(to, from);
   return from !== to;
 }
 
