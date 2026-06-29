@@ -1,6 +1,7 @@
 import path from "node:path";
 import { NpmAdapter } from "../adapters/npm/index.js";
-import type { UpdateCandidate } from "../adapters/types.js";
+import { PipAdapter } from "../adapters/pip/index.js";
+import type { EcosystemAdapter, UpdateCandidate } from "../adapters/types.js";
 import type { Config } from "../config/schema.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
 import { log } from "../logger.js";
@@ -36,26 +37,34 @@ export async function selectCandidates(
   opts: SelectOptions,
 ): Promise<{ base: string; selected: UpdateCandidate[] }> {
   const base = await gh.getDefaultBranch(ref);
-  const adapter = new NpmAdapter();
 
-  const configuredDirs = config.ecosystems.npm.directories;
-  const manifestPaths =
-    configuredDirs.length > 0
-      ? configuredDirs.map((d) => path.posix.join(d, "package.json"))
-      : await gh.findManifestPaths(ref, base, "package.json");
-
-  log.debug(`scanning ${manifestPaths.length} manifest(s) on ${base}`);
+  const ecosystems: { adapter: EcosystemAdapter; dirs: string[] }[] = [];
+  if (config.ecosystems.npm.enabled) {
+    ecosystems.push({ adapter: new NpmAdapter(), dirs: config.ecosystems.npm.directories });
+  }
+  if (config.ecosystems.pip.enabled) {
+    ecosystems.push({ adapter: new PipAdapter(), dirs: config.ecosystems.pip.directories });
+  }
 
   const selected: UpdateCandidate[] = [];
-  for (const mPath of manifestPaths) {
-    const file = await gh.getFile(ref, mPath, base);
-    if (!file) continue;
-    const manifest = adapter.parseManifestContent(file.content, mPath, "");
-    const candidates = await adapter.listOutdated(manifest);
-    for (const c of candidates) {
-      if (!opts.allow.includes(c.updateType)) continue;
-      selected.push(c);
-      if (selected.length >= opts.limit) return { base, selected };
+  for (const { adapter, dirs } of ecosystems) {
+    const filename = adapter.manifestFilenames[0]!;
+    const manifestPaths =
+      dirs.length > 0
+        ? dirs.map((d) => path.posix.join(d, filename))
+        : await gh.findManifestPaths(ref, base, filename);
+    log.debug(`${adapter.id}: scanning ${manifestPaths.length} manifest(s) on ${base}`);
+
+    for (const mPath of manifestPaths) {
+      const file = await gh.getFile(ref, mPath, base);
+      if (!file) continue;
+      const manifest = adapter.parseManifestContent(file.content, mPath, "");
+      const candidates = await adapter.listOutdated(manifest);
+      for (const c of candidates) {
+        if (!opts.allow.includes(c.updateType)) continue;
+        selected.push(c);
+        if (selected.length >= opts.limit) return { base, selected };
+      }
     }
   }
   return { base, selected };

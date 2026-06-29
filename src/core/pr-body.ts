@@ -1,10 +1,36 @@
 import type { UpdateCandidate } from "../adapters/types.js";
-import type { ResolveOutcome } from "../resolve/types.js";
 import type { SafetyVerdict } from "../safety/types.js";
 import type { ImpactReport } from "../impact/analyze.js";
 import type { DeprecationFinding } from "../deprecation/detect.js";
+import type { CandidateResolution } from "./apply.js";
 
-const REGISTRY_BASE = "https://www.npmjs.com/package";
+function registryLinks(c: UpdateCandidate): string {
+  if (c.ecosystem === "pip") {
+    const base = `https://pypi.org/project/${c.name}`;
+    return `[PyPI](${base}/) · [${c.name} ${c.latestVersion}](${base}/${c.latestVersion}/)`;
+  }
+  const base = `https://www.npmjs.com/package/${c.name}`;
+  return `[npm](${base}) · [${c.name}@${c.latestVersion}](${base}/v/${c.latestVersion})`;
+}
+
+function renderResolution(c: UpdateCandidate, res: CandidateResolution): string[] {
+  const lines = ["### 🔧 Resolution (F1)"];
+  const verified =
+    c.ecosystem === "pip"
+      ? "verified resolvable via uv (no package code executed)"
+      : "lockfile regenerated (no package code executed)";
+  const method =
+    res.status === "resolved-cobump"
+      ? `resolved via ${res.cobumps} co-bump${res.cobumps === 1 ? "" : "s"}`
+      : "resolved directly";
+  lines.push(`- ✅ ${method}; ${verified}`);
+  lines.push("- changes:");
+  for (const ch of res.changes) {
+    const tag = ch.cobump ? " _(auto co-bump)_" : "";
+    lines.push(`  - \`${ch.name}\`: \`${ch.fromRange}\` → \`${ch.toRange}\`${tag}`);
+  }
+  return lines;
+}
 
 function renderDeprecation(findings: DeprecationFinding[]): string[] {
   const lines = ["### ⏳ Deprecation (F4)"];
@@ -52,14 +78,12 @@ function renderSafety(verdict: SafetyVerdict): string[] {
 }
 
 /**
- * Render the PR body from the resolution outcome. M1 reports the resolved
- * change set (including automatic co-bumps) and whether the lockfile was
- * regenerated. Safety (F2), impact (F3), and deprecation (F4) are shown as
- * explicitly pending so the report never overclaims.
+ * Render the PR body: resolution (F1, incl. auto co-bumps) + safety (F2) +
+ * impact (F3) + deprecation (F4). Ecosystem-aware; never overclaims.
  */
 export function renderPrBody(
   c: UpdateCandidate,
-  outcome: ResolveOutcome,
+  res: CandidateResolution,
   safety: SafetyVerdict,
   impact: ImpactReport,
   deprecation: DeprecationFinding[],
@@ -68,56 +92,29 @@ export function renderPrBody(
   const lines = [
     `## SafeBump: ${c.name} ${from} → ${c.latestVersion}  ·  Risk: ${impact.risk.risk}`,
     "",
-    "### 🔧 Resolution (F1)",
-  ];
-
-  if (outcome.status === "unsolvable") {
-    lines.push(
-      `- ❌ **could not resolve** — ${outcome.reason}`,
-      `- attempted: ${outcome.attempted.join(" → ")}`,
-      "",
-      "<details><summary>npm conflict output</summary>",
-      "",
-      "```",
-      outcome.rawError,
-      "```",
-      "</details>",
-    );
-  } else {
-    const method =
-      outcome.status === "resolved-cobump"
-        ? `resolved via co-bump (${outcome.strategy})`
-        : "resolved directly";
-    lines.push(`- ✅ ${method}; lockfile regenerated (no package code executed)`);
-    lines.push("- changes:");
-    for (const ch of outcome.changes) {
-      const tag = ch.cobump ? " _(auto co-bump)_" : "";
-      lines.push(`  - \`${ch.name}\`: \`${ch.fromRange}\` → \`${ch.toRange}\`${tag}`);
-    }
-  }
-
-  lines.push("", ...renderSafety(safety));
-  lines.push("", ...renderImpact(impact));
-  lines.push("", ...renderDeprecation(deprecation));
-
-  lines.push(
+    ...renderResolution(c, res),
+    "",
+    ...renderSafety(safety),
+    "",
+    ...renderImpact(impact),
+    "",
+    ...renderDeprecation(deprecation),
     "",
     "### Links",
-    `- [npm](${REGISTRY_BASE}/${c.name}) · [${c.name}@${c.latestVersion}](${REGISTRY_BASE}/${c.name}/v/${c.latestVersion})`,
+    `- ${registryLinks(c)}`,
     "",
     "---",
     "🤖 Generated with [SafeBump](https://github.com/Pirikara/SafeBump)",
-  );
+  ];
   return lines.join("\n");
 }
 
 /** PR title, including a co-bump count when applicable. */
-export function renderPrTitle(c: UpdateCandidate, outcome: ResolveOutcome): string {
+export function renderPrTitle(c: UpdateCandidate, res: CandidateResolution): string {
   const from = c.currentVersion ?? c.currentRange;
   const base = `bump ${c.name} from ${from} to ${c.latestVersion}`;
-  if (outcome.status === "resolved-cobump") {
-    const extra = outcome.changes.filter((ch) => ch.cobump).length;
-    return `${base} (+${extra} co-bump${extra === 1 ? "" : "s"})`;
+  if (res.status === "resolved-cobump" && res.cobumps > 0) {
+    return `${base} (+${res.cobumps} co-bump${res.cobumps === 1 ? "" : "s"})`;
   }
   return base;
 }

@@ -24,6 +24,43 @@ export function isSourceFile(path: string): boolean {
   return SOURCE_EXT.test(path);
 }
 
+export function isPythonSourceFile(path: string): boolean {
+  return /\.py$/.test(path);
+}
+
+/**
+ * Candidate Python import roots for a PyPI distribution name. The distribution
+ * name often differs from the import name (e.g. PyYAML→yaml), which we can't
+ * fully resolve without metadata; we best-effort try the name and its
+ * underscore form. Documented limitation.
+ */
+function pythonImportRoots(distName: string): string[] {
+  const lower = distName.toLowerCase();
+  return Array.from(new Set([lower, lower.replace(/-/g, "_")]));
+}
+
+/**
+ * Find where a PyPI package is imported across Python source files (F3.3 for
+ * pip). Matches `import pkg`, `import pkg.sub`, and `from pkg[.sub] import ...`.
+ */
+export function findPythonUsage(pkg: string, files: SourceFile[]): UsageReport {
+  const roots = pythonImportRoots(pkg).map(escapeRe).join("|");
+  const re = new RegExp(`^[ \\t]*(?:from[ \\t]+(${roots})|import[ \\t]+(${roots}))(?:[.\\s,]|$)`, "gm");
+
+  const sites: ImportSite[] = [];
+  const filesWith = new Set<string>();
+  for (const f of files) {
+    let m: RegExpExecArray | null;
+    re.lastIndex = 0;
+    while ((m = re.exec(f.content))) {
+      sites.push({ file: f.path, line: lineOf(f.content, m.index), symbols: [], kind: "import" });
+      filesWith.add(f.path);
+    }
+  }
+  sites.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+  return { pkg, files: filesWith.size, sites };
+}
+
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

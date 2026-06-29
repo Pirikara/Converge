@@ -67,6 +67,8 @@ export interface EcosystemAdapter {
   manifestFilenames: string[];
 
   parseManifest(absPath: string, repoRoot: string): Promise<Manifest>;
+  /** Parse a manifest from its raw text (for remote/in-memory files). */
+  parseManifestContent(raw: string, absPath: string, repoRoot: string): Manifest;
   listOutdated(manifest: Manifest): Promise<UpdateCandidate[]>;
   fetchPackageMeta(name: string): Promise<PackageMeta>;
 }

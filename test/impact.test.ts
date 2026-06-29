@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findUsage } from "../src/impact/usage.js";
+import { findUsage, findPythonUsage } from "../src/impact/usage.js";
 import { scoreRisk } from "../src/impact/risk.js";
 
 describe("findUsage", () => {
@@ -46,6 +46,29 @@ describe("findUsage", () => {
     expect(next.sites[0]!.symbols).toEqual(["useRouter"]);
     // and React is not mis-attributed to next
     expect(next.sites[0]!.symbols).not.toContain("React");
+  });
+});
+
+describe("findPythonUsage", () => {
+  const files = [
+    { path: "app/main.py", content: "import langchain\nfrom langchain.chains import LLMChain\n" },
+    { path: "app/util.py", content: "from langchain_core import x\nimport os\n" },
+    { path: "app/no.py", content: "import requests\n" },
+  ];
+
+  it("matches import and from-import of the package", () => {
+    const u = findPythonUsage("langchain", files);
+    expect(u.files).toBe(1); // main.py (langchain), not langchain_core
+    expect(u.sites).toHaveLength(2);
+  });
+
+  it("matches the underscore form of a hyphenated dist name", () => {
+    // langchain-core imports as langchain_core
+    expect(findPythonUsage("langchain-core", files).files).toBe(1);
+  });
+
+  it("reports zero for unused packages", () => {
+    expect(findPythonUsage("numpy", files).files).toBe(0);
   });
 });
 

@@ -1,6 +1,6 @@
 import type { UpdateCandidate } from "../adapters/types.js";
 import type { SafetyDecision } from "../safety/types.js";
-import { findUsage, type SourceFile, type UsageReport } from "./usage.js";
+import { findUsage, findPythonUsage, type SourceFile, type UsageReport } from "./usage.js";
 import { scoreRisk, type RiskResult } from "./risk.js";
 
 export interface ImpactReport {
@@ -19,7 +19,10 @@ export function analyzeImpact(
   cobumps: number,
   safety: SafetyDecision,
 ): ImpactReport {
-  const usage = findUsage(candidate.name, sourceFiles);
+  const usage =
+    candidate.ecosystem === "pip"
+      ? findPythonUsage(candidate.name, sourceFiles)
+      : findUsage(candidate.name, sourceFiles);
   const risk = scoreRisk({
     updateType: candidate.updateType,
     usageFiles: usage.files,

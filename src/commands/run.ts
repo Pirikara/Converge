@@ -14,7 +14,7 @@ import { evaluateSafety } from "../safety/gate.js";
 import { provenanceStatus } from "../safety/provenance.js";
 import type { SafetyVerdict } from "../safety/types.js";
 import { analyzeImpact, type ImpactReport } from "../impact/analyze.js";
-import { isSourceFile, type SourceFile } from "../impact/usage.js";
+import { isSourceFile, isPythonSourceFile, type SourceFile } from "../impact/usage.js";
 import { detectDeprecation, type DeprecationFinding } from "../deprecation/detect.js";
 import {
   decidePackageManager,
@@ -22,6 +22,8 @@ import {
   type NpmPackageManager,
 } from "../resolve/pm-detect.js";
 import { fetchPackageMeta } from "../adapters/npm/registry.js";
+import { fetchPyPiMeta } from "../adapters/pip/pypi.js";
+import type { PackageMeta, UpdateCandidate } from "../adapters/types.js";
 import { log } from "../logger.js";
 
 const PROBE_LOCKFILES = [
@@ -61,16 +63,17 @@ async function loadRepoConfig(gh: GitHubClient, ref: RepoRef, base: string): Pro
 }
 
 function printResolution(res: CandidateResolution): void {
-  if (res.outcome.status === "unsolvable") {
-    process.stdout.write(`  ${pc.red("✗ unresolvable")} — ${res.outcome.reason}\n`);
+  if (res.status === "unsolvable") {
+    process.stdout.write(`  ${pc.red("✗ unresolvable")} — ${res.reason ?? "conflict"}\n`);
     return;
   }
-  const tag =
-    res.outcome.status === "resolved-cobump"
-      ? pc.yellow(`co-bump×${res.outcome.changes.length - 1}`)
-      : pc.green("direct");
+  if (res.status === "needs-build") {
+    process.stdout.write(`  ${pc.yellow("⚠ needs build")} — source-only dependency; skipped (no code execution)\n`);
+    return;
+  }
+  const tag = res.status === "resolved-cobump" ? pc.yellow(`co-bump×${res.cobumps}`) : pc.green("direct");
   process.stdout.write(`  ${pc.green("✓ resolved")} (${tag})\n`);
-  for (const ch of res.outcome.changes) {
+  for (const ch of res.changes) {
     const mark = ch.cobump ? pc.yellow("  + ") : "  • ";
     process.stdout.write(`${mark}${ch.name}: ${ch.fromRange} → ${ch.toRange}\n`);
   }
@@ -136,13 +139,13 @@ async function openPr(
     return;
   }
   const baseSha = await gh.getBranchSha(ref, base);
-  const title = renderPrTitle(res.candidate, res.outcome);
+  const title = renderPrTitle(res.candidate, res);
   await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
   const pr = await gh.createPr(ref, {
     head: branch,
     base,
     title,
-    body: renderPrBody(res.candidate, res.outcome, safety, impact, deprecation),
+    body: renderPrBody(res.candidate, res, safety, impact, deprecation),
   });
   process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
@@ -168,17 +171,21 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
   }
 
   const sourceCache = new Map<string, SourceFile[]>();
-  const getSources = async (dir: string): Promise<SourceFile[]> => {
-    const cached = sourceCache.get(dir);
+  const getSources = async (c: UpdateCandidate): Promise<SourceFile[]> => {
+    const key = `${c.ecosystem}:${c.dir}`;
+    const cached = sourceCache.get(key);
     if (cached) return cached;
     const files = await gh.fetchSourceFiles(ref, base, {
-      dirPrefix: dir,
-      predicate: isSourceFile,
+      dirPrefix: c.dir,
+      predicate: c.ecosystem === "pip" ? isPythonSourceFile : isSourceFile,
       cap: SOURCE_FILE_CAP,
     });
-    sourceCache.set(dir, files);
+    sourceCache.set(key, files);
     return files;
   };
+
+  const getMeta = (c: UpdateCandidate): Promise<PackageMeta> =>
+    c.ecosystem === "pip" ? fetchPyPiMeta(c.name) : fetchPackageMeta(c.name);
 
   // Detect the package manager per directory so we never write a foreign
   // lockfile (e.g. a package-lock.json into a pnpm repo).
@@ -215,21 +222,33 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
   let unsolvable = 0;
   let blocked = 0;
   let reportOnly = 0;
+
+  const deprecationOf = (c: UpdateCandidate, meta: PackageMeta): DeprecationFinding[] =>
+    detectDeprecation(
+      { name: c.name, currentVersion: c.currentVersion, targetVersion: c.latestVersion },
+      meta,
+      { staleDays: STALE_DAYS, now: Date.now() },
+    );
+
   for (const candidate of selected) {
-    const header =
+    process.stdout.write(
       `\n${pc.bold(candidate.name)} ${pc.dim(candidate.currentVersion ?? candidate.currentRange)} → ` +
-      `${pc.bold(candidate.latestVersion)} [${candidate.updateType}] ${pc.dim(`(${candidate.dir})`)}`;
-    process.stdout.write(`${header}\n`);
+        `${pc.bold(candidate.latestVersion)} [${candidate.updateType}] ` +
+        `${pc.dim(`(${candidate.ecosystem}, ${candidate.dir})`)}\n`,
+    );
 
     // F2 gate first: never resolve/install a dangerous or held version.
-    const meta = await fetchPackageMeta(candidate.name);
+    const meta = await getMeta(candidate);
     const verdict = await evaluateSafety(
       {
-        ecosystem: "npm",
+        ecosystem: candidate.ecosystem === "pip" ? "PyPI" : "npm",
         name: candidate.name,
         version: candidate.latestVersion,
         publishedAt: meta.publishedAt[candidate.latestVersion],
-        provenance: provenanceStatus(meta, candidate.currentVersion, candidate.latestVersion),
+        provenance:
+          candidate.ecosystem === "npm"
+            ? provenanceStatus(meta, candidate.currentVersion, candidate.latestVersion)
+            : undefined,
       },
       config.safety,
     );
@@ -242,48 +261,37 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       continue;
     }
 
-    // Guard: only resolve managers we can safely regenerate a lockfile for.
-    const pm = await getPm(candidate.dir);
-    if (!isResolvable(pm)) {
-      process.stdout.write(`  ${pc.dim(`pm: ${pm}`)}\n`);
-      const impact = analyzeImpact(candidate, await getSources(candidate.dir), 0, verdict.decision);
-      printImpact(impact);
-      printDeprecation(
-        detectDeprecation(
-          { name: candidate.name, currentVersion: candidate.currentVersion, targetVersion: candidate.latestVersion },
-          meta,
-          { staleDays: STALE_DAYS, now: Date.now() },
-        ),
-      );
-      process.stdout.write(
-        `  ${pc.yellow("⊘ resolution skipped")} — ${pm} lockfiles not yet supported (report only, no PR)\n`,
-      );
-      reportOnly++;
-      continue;
+    // Guard (npm family only): never write a foreign lockfile for an
+    // unsupported package manager — degrade to a read-only report.
+    if (candidate.ecosystem === "npm") {
+      const pm = await getPm(candidate.dir);
+      if (!isResolvable(pm)) {
+        process.stdout.write(`  ${pc.dim(`pm: ${pm}`)}\n`);
+        printImpact(analyzeImpact(candidate, await getSources(candidate), 0, verdict.decision));
+        printDeprecation(deprecationOf(candidate, meta));
+        process.stdout.write(
+          `  ${pc.yellow("⊘ resolution skipped")} — ${pm} lockfiles not yet supported (report only, no PR)\n`,
+        );
+        reportOnly++;
+        continue;
+      }
     }
 
     const res = await resolveCandidate(gh, ref, base, candidate);
     printResolution(res);
-    if (res.outcome.status === "unsolvable") {
+    if (res.status === "unsolvable") {
       unsolvable++;
+      continue;
+    }
+    if (res.status === "needs-build") {
+      reportOnly++;
       continue;
     }
     resolved++;
 
-    // F3 impact: usage mapping + risk over the consuming repo's source.
-    const cobumps =
-      res.outcome.status === "resolved-cobump"
-        ? res.outcome.changes.filter((c) => c.cobump).length
-        : 0;
-    const impact = analyzeImpact(candidate, await getSources(candidate.dir), cobumps, verdict.decision);
+    const impact = analyzeImpact(candidate, await getSources(candidate), res.cobumps, verdict.decision);
     printImpact(impact);
-
-    // F4 deprecation/abandonment (from the registry metadata already fetched).
-    const deprecation = detectDeprecation(
-      { name: candidate.name, currentVersion: candidate.currentVersion, targetVersion: candidate.latestVersion },
-      meta,
-      { staleDays: STALE_DAYS, now: Date.now() },
-    );
+    const deprecation = deprecationOf(candidate, meta);
     printDeprecation(deprecation);
 
     if (opts.apply) {

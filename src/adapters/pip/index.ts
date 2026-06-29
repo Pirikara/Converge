@@ -37,12 +37,15 @@ export class PipAdapter implements EcosystemAdapter {
 
   async parseManifest(absPath: string, repoRoot: string): Promise<Manifest> {
     const raw = await readFile(absPath, "utf8");
-    const deps = parseRequirements(raw);
+    return this.parseManifestContent(raw, absPath, repoRoot);
+  }
+
+  parseManifestContent(raw: string, absPath: string, repoRoot: string): Manifest {
     return {
       ecosystem: "pip",
       path: absPath,
       dir: path.relative(repoRoot, path.dirname(absPath)) || ".",
-      dependencies: deps,
+      dependencies: parseRequirements(raw),
     };
   }
 
