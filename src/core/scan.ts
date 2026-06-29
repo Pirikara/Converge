@@ -4,6 +4,7 @@ import { PipAdapter } from "../adapters/pip/index.js";
 import { GoAdapter } from "../adapters/gomod/index.js";
 import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
 import { CargoAdapter } from "../adapters/cargo/index.js";
+import { PyProjectAdapter } from "../adapters/pyproject/index.js";
 import type { EcosystemAdapter, Manifest, UpdateCandidate } from "../adapters/types.js";
 import { resolveManifestPaths } from "./discover.js";
 import { loadConfig } from "../config/load.js";
@@ -30,6 +31,7 @@ export async function scan(repoRootInput: string): Promise<ScanResult> {
   }
   if (config.ecosystems.pip.enabled) {
     enabled.push({ adapter: new PipAdapter(), dirs: config.ecosystems.pip.directories });
+    enabled.push({ adapter: new PyProjectAdapter(), dirs: config.ecosystems.pip.directories });
   }
   if (config.ecosystems.gomod.enabled) {
     enabled.push({ adapter: new GoAdapter(), dirs: config.ecosystems.gomod.directories });

@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseNpmLockTree, type LockPackage } from "./lockfile-npm.js";
-import { parsePnpmLock, parseYarnLock, parseGoSum, parseGemfileLock, parseCargoLock } from "./parsers.js";
+import { parsePnpmLock, parseYarnLock, parseGoSum, parseGemfileLock, parseCargoLock, parseTomlLockPackages } from "./parsers.js";
 import { parseGoMod } from "../adapters/gomod/gomod.js";
 import { parseCargoToml } from "../adapters/cargo/cargo-toml.js";
+import { parsePyproject } from "../adapters/pyproject/parse.js";
 
 export interface EnumeratedLock {
   file: string;
@@ -33,6 +34,9 @@ export function parseLockfile(
       return { ecosystem: "RubyGems", packages: parseGemfileLock(content).packages };
     case "Cargo.lock":
       return { ecosystem: "crates.io", packages: parseCargoLock(content) };
+    case "poetry.lock":
+    case "uv.lock":
+      return { ecosystem: "PyPI", packages: parseTomlLockPackages(content) };
     default:
       return null;
   }
@@ -102,6 +106,24 @@ export async function enumerateLocks(dir: string): Promise<EnumeratedLock[]> {
     const ct = await read(path.join(dir, "Cargo.toml"));
     if (ct) for (const d of parseCargoToml(ct)) directs.add(d.name);
     out.push({ file: "Cargo.lock", ecosystem: "crates.io", packages: parseCargoLock(cl), directs });
+  }
+
+  // Python project lockfiles (poetry / uv) → PyPI
+  const [poetry, uv] = await Promise.all([
+    read(path.join(dir, "poetry.lock")),
+    read(path.join(dir, "uv.lock")),
+  ]);
+  if (poetry || uv) {
+    const directs = new Set<string>();
+    const pp = await read(path.join(dir, "pyproject.toml"));
+    if (pp) for (const d of parsePyproject(pp)) directs.add(d.name);
+    const lock = (poetry ?? uv)!;
+    out.push({
+      file: poetry ? "poetry.lock" : "uv.lock",
+      ecosystem: "PyPI",
+      packages: parseTomlLockPackages(lock),
+      directs,
+    });
   }
 
   return out;

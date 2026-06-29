@@ -13,6 +13,8 @@ const LOCKFILE_NAMES = new Set([
   "go.sum",
   "Gemfile.lock",
   "Cargo.lock",
+  "poetry.lock",
+  "uv.lock",
 ]);
 
 /** Packages present in `next` but not in `prev` (added or version-changed). */

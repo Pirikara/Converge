@@ -58,8 +58,8 @@ export function parseGoSum(content: string): LockPackage[] {
   return dedupe(out);
 }
 
-/** Cargo.lock — `[[package]]` blocks with `name` / `version`. */
-export function parseCargoLock(content: string): LockPackage[] {
+/** TOML lockfiles with `[[package]]` blocks (Cargo.lock, poetry.lock, uv.lock). */
+export function parseTomlLockPackages(content: string): LockPackage[] {
   const out: LockPackage[] = [];
   let name: string | null = null;
   for (const raw of content.split(/\r?\n/)) {
@@ -81,6 +81,9 @@ export function parseCargoLock(content: string): LockPackage[] {
   }
   return dedupe(out);
 }
+
+/** Cargo.lock (alias of the shared TOML `[[package]]` parser). */
+export const parseCargoLock = parseTomlLockPackages;
 
 /** Gemfile.lock — `specs:` lists every resolved gem; `DEPENDENCIES` lists direct gems. */
 export function parseGemfileLock(content: string): { packages: LockPackage[]; directs: Set<string> } {
