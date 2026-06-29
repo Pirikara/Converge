@@ -32,7 +32,6 @@ describe("getResolver", () => {
   });
 
   it("returns null for unsupported managers", () => {
-    expect(getResolver("yarn")).toBeNull();
     expect(getResolver("bun")).toBeNull();
   });
 });

@@ -21,10 +21,10 @@ describe("decidePackageManager", () => {
     expect(decidePackageManager({ lockfiles: [] })).toBe("npm");
   });
 
-  it("npm and pnpm are resolvable; yarn/bun are not yet", () => {
+  it("npm/pnpm/yarn are resolvable; bun is not yet", () => {
     expect(isResolvable("npm")).toBe(true);
     expect(isResolvable("pnpm")).toBe(true);
-    expect(isResolvable("yarn")).toBe(false);
+    expect(isResolvable("yarn")).toBe(true);
     expect(isResolvable("bun")).toBe(false);
   });
 });
