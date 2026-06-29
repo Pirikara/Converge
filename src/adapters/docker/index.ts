@@ -7,14 +7,25 @@ import type {
   UpdateCandidate,
 } from "../types.js";
 import { parseDockerfile } from "./dockerfile.js";
+import { parseCompose } from "./compose.js";
 import { fetchDockerTags } from "./registry.js";
+
+function isComposeFile(p: string): boolean {
+  return /(^|\/)(docker-)?compose\.ya?ml$/.test(p);
+}
 import { pickNewerDockerTag, dockerUpdateType } from "./versioning.js";
 import { log } from "../../logger.js";
 
 /** Docker base images (Dockerfile `FROM`), tags resolved via Docker Hub. */
 export class DockerAdapter implements EcosystemAdapter {
   readonly id = "docker" as const;
-  readonly manifestFilenames = ["Dockerfile"];
+  readonly manifestFilenames = [
+    "Dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "compose.yml",
+    "compose.yaml",
+  ];
 
   async parseManifest(absPath: string, repoRoot: string): Promise<Manifest> {
     return this.parseManifestContent(await readFile(absPath, "utf8"), absPath, repoRoot);
@@ -25,7 +36,7 @@ export class DockerAdapter implements EcosystemAdapter {
       ecosystem: "docker",
       path: absPath,
       dir: path.relative(repoRoot, path.dirname(absPath)) || ".",
-      dependencies: parseDockerfile(raw),
+      dependencies: isComposeFile(absPath) ? parseCompose(raw) : parseDockerfile(raw),
     };
   }
 

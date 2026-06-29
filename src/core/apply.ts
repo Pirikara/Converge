@@ -13,6 +13,7 @@ import { editGemfilePin } from "../adapters/rubygems/gemfile.js";
 import { runCargoUpdate } from "../resolve/cargo-cli.js";
 import { editCargoToml } from "../adapters/cargo/cargo-toml.js";
 import { editDockerfileTag } from "../adapters/docker/dockerfile.js";
+import { editComposeImageTag } from "../adapters/docker/compose.js";
 import { getResolver } from "../resolve/npm-family.js";
 import type { NpmPackageManager } from "../resolve/pm-detect.js";
 import { cleanupWorkdir } from "../resolve/workdir.js";
@@ -294,8 +295,10 @@ async function resolveDockerImage(
   // No lockfile / resolution step — just edit the FROM tag.
   const file = await gh.getFile(ref, candidate.manifestPath, base);
   if (!file) throw new Error(`${candidate.manifestPath} not found`);
+  const isCompose = /(docker-)?compose\.ya?ml$/.test(candidate.manifestPath);
+  const editTag = isCompose ? editComposeImageTag : editDockerfileTag;
   try {
-    const edited = editDockerfileTag(file.content, candidate.name, candidate.currentRange, candidate.latestVersion);
+    const edited = editTag(file.content, candidate.name, candidate.currentRange, candidate.latestVersion);
     return {
       candidate,
       status: "resolved",

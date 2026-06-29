@@ -144,7 +144,7 @@ export function renderDockerPrBody(c: UpdateCandidate): string {
     `## Converge: ${c.name} ${c.currentRange} → ${c.latestVersion}`,
     "",
     "### 🐳 Base image",
-    `- updates the \`FROM ${c.name}\` tag in \`${c.dir}/Dockerfile\` (${c.updateType})`,
+    `- updates the \`${c.name}\` image tag in \`${c.manifestPath}\` (${c.updateType})`,
     `- \`${c.name}:${c.currentRange}\` → \`${c.name}:${c.latestVersion}\``,
     "",
     "### Links",

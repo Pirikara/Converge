@@ -66,11 +66,15 @@ export async function selectCandidates(
 
   const selected: UpdateCandidate[] = [];
   for (const { adapter, dirs } of ecosystems) {
-    const filename = adapter.manifestFilenames[0]!;
-    const manifestPaths =
-      dirs.length > 0
-        ? dirs.map((d) => path.posix.join(d, filename))
-        : await gh.findManifestPaths(ref, base, filename);
+    const manifestPaths = (
+      await Promise.all(
+        adapter.manifestFilenames.map((filename) =>
+          dirs.length > 0
+            ? Promise.resolve(dirs.map((d) => path.posix.join(d, filename)))
+            : gh.findManifestPaths(ref, base, filename),
+        ),
+      )
+    ).flat();
     log.debug(`${adapter.id}: scanning ${manifestPaths.length} manifest(s) on ${base}`);
 
     for (const mPath of manifestPaths) {

@@ -51,8 +51,11 @@ export async function scan(repoRootInput: string): Promise<ScanResult> {
   const candidates: UpdateCandidate[] = [];
 
   for (const { adapter, dirs } of enabled) {
-    const filename = adapter.manifestFilenames[0]!;
-    const paths = await resolveManifestPaths(repoRoot, filename, dirs);
+    const paths = (
+      await Promise.all(
+        adapter.manifestFilenames.map((f) => resolveManifestPaths(repoRoot, f, dirs)),
+      )
+    ).flat();
     log.debug(`${adapter.id}: ${paths.length} manifest(s) to scan`);
 
     for (const p of paths) {
