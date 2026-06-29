@@ -21,9 +21,9 @@ describe("decidePackageManager", () => {
     expect(decidePackageManager({ lockfiles: [] })).toBe("npm");
   });
 
-  it("only npm is resolvable for now", () => {
+  it("npm and pnpm are resolvable; yarn/bun are not yet", () => {
     expect(isResolvable("npm")).toBe(true);
-    expect(isResolvable("pnpm")).toBe(false);
+    expect(isResolvable("pnpm")).toBe(true);
     expect(isResolvable("yarn")).toBe(false);
     expect(isResolvable("bun")).toBe(false);
   });

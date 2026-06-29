@@ -32,6 +32,10 @@ function renderResolution(c: UpdateCandidate, res: CandidateResolution): string[
     const tag = ch.cobump ? " _(auto co-bump)_" : "";
     lines.push(`  - \`${ch.name}\`: \`${ch.fromRange}\` → \`${ch.toRange}\`${tag}`);
   }
+  if (res.warnings.length > 0) {
+    lines.push("- ⚠️ warnings:");
+    for (const w of res.warnings) lines.push(`  - ${w}`);
+  }
   return lines;
 }
 

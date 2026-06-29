@@ -4,10 +4,13 @@ import path from "node:path";
 import pc from "picocolors";
 import { bumpRange } from "../adapters/npm/range.js";
 import { parseRequirements } from "../adapters/pip/requirements.js";
-import { resolveUpdate } from "../resolve/ladder.js";
+import { getResolver } from "../resolve/npm-family.js";
+import { decidePackageManager } from "../resolve/pm-detect.js";
 import { resolvePipUpdate } from "../resolve/pip.js";
 import { prepareWorkdir, cleanupWorkdir } from "../resolve/workdir.js";
 import { log } from "../logger.js";
+
+const NPM_LOCKFILES = ["pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock", "package-lock.json"];
 
 export interface ResolveOptions {
   write?: boolean;
@@ -30,6 +33,23 @@ function currentRange(pkgJson: string, name: string): string | null {
   return null;
 }
 
+async function detectLocalPm(repoDir: string): Promise<ReturnType<typeof decidePackageManager>> {
+  let packageManagerField: string | null = null;
+  try {
+    packageManagerField =
+      (JSON.parse(await readFile(path.join(repoDir, "package.json"), "utf8")) as {
+        packageManager?: string;
+      }).packageManager ?? null;
+  } catch {
+    /* ignore */
+  }
+  const lockfiles: string[] = [];
+  for (const lf of NPM_LOCKFILES) {
+    if (await exists(path.join(repoDir, lf))) lockfiles.push(lf);
+  }
+  return decidePackageManager({ packageManagerField, lockfiles });
+}
+
 async function runResolveNpm(
   repoDir: string,
   pkg: string,
@@ -42,24 +62,31 @@ async function runResolveNpm(
     log.error(`${pkg} is not a dependency in package.json`);
     return 1;
   }
+  const pm = await detectLocalPm(repoDir);
+  const resolver = getResolver(pm);
+  if (!resolver) {
+    log.error(`package manager '${pm}' is not yet supported for resolution`);
+    return 1;
+  }
   const toRange = bumpRange(fromRange, toVersion);
-  log.info(`resolving ${pc.bold(pkg)} ${fromRange} → ${toRange} ${pc.dim("(npm, no code executed)")}`);
+  log.info(`resolving ${pc.bold(pkg)} ${fromRange} → ${toRange} ${pc.dim(`(${pm}, no code executed)`)}`);
 
   const workdir = await prepareWorkdir(repoDir);
   try {
-    const outcome = await resolveUpdate({ workdir, name: pkg, fromRange, toRange });
-    if (outcome.status === "unsolvable") {
-      process.stdout.write(`\n${pc.red("✗ unresolvable")} — ${outcome.reason}\n`);
+    const r = await resolver.resolve({ workdir, name: pkg, fromRange, toRange });
+    if (r.status === "unsolvable") {
+      process.stdout.write(`\n${pc.red("✗ unresolvable")} — ${r.reason}\n`);
       return 2;
     }
-    const tag = outcome.status === "resolved-cobump" ? pc.yellow("via co-bump") : pc.green("direct");
+    const tag = r.status === "resolved-cobump" ? pc.yellow("via co-bump") : pc.green("direct");
     process.stdout.write(`\n${pc.green("✓ resolved")} (${tag})\n`);
-    for (const c of outcome.changes) {
+    for (const c of r.changes) {
       process.stdout.write(`${c.cobump ? pc.yellow("  + ") : "  • "}${c.name}: ${c.fromRange} → ${c.toRange}\n`);
     }
+    for (const w of r.warnings) process.stdout.write(`  ${pc.yellow(`⚠ ${w}`)}\n`);
     if (opts.write) {
-      for (const f of outcome.files) await writeFile(path.join(repoDir, f.name), f.content);
-      process.stdout.write(`\n${pc.cyan("wrote")} ${outcome.files.map((f) => f.name).join(", ")}\n`);
+      for (const f of r.files) await writeFile(path.join(repoDir, f.name), f.content);
+      process.stdout.write(`\n${pc.cyan("wrote")} ${r.files.map((f) => f.name).join(", ")}\n`);
     }
     return 0;
   } finally {

@@ -4,13 +4,12 @@ import path from "node:path";
 import { bumpRange } from "../adapters/npm/range.js";
 import type { UpdateCandidate } from "../adapters/types.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
-import { resolveUpdate } from "../resolve/ladder.js";
 import { resolvePipUpdate } from "../resolve/pip.js";
+import { getResolver } from "../resolve/npm-family.js";
+import type { NpmPackageManager } from "../resolve/pm-detect.js";
 import { cleanupWorkdir } from "../resolve/workdir.js";
 import type { PackageChange } from "../resolve/types.js";
 import { log } from "../logger.js";
-
-const LOCK_FILES = ["package-lock.json", "npm-shrinkwrap.json"];
 
 /** Normalised resolution result across ecosystems. */
 export interface CandidateResolution {
@@ -21,16 +20,23 @@ export interface CandidateResolution {
   repoFiles: { path: string; content: string }[];
   /** Number of automatic co-bumps applied. */
   cobumps: number;
+  /** Non-fatal warnings (e.g. pnpm unmet peers). */
+  warnings: string[];
   /** Explanation for unsolvable / needs-build. */
   reason?: string;
 }
 
-async function resolveNpm(
+async function resolveNpmFamily(
   gh: GitHubClient,
   ref: RepoRef,
   base: string,
   candidate: UpdateCandidate,
+  pm: NpmPackageManager,
 ): Promise<CandidateResolution> {
+  const resolver = getResolver(pm);
+  if (!resolver) {
+    return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: `no resolver for ${pm}` };
+  }
   const dir = candidate.dir;
   const prefix = dir === "." ? "" : `${dir}/`;
   const workdir = await mkdtemp(path.join(tmpdir(), "safebump-apply-"));
@@ -38,7 +44,7 @@ async function resolveNpm(
     const pkg = await gh.getFile(ref, `${prefix}package.json`, base);
     if (!pkg) throw new Error(`package.json not found in ${dir}`);
     await writeFile(path.join(workdir, "package.json"), pkg.content);
-    for (const name of LOCK_FILES) {
+    for (const name of resolver.lockfileNames) {
       const lock = await gh.getFile(ref, `${prefix}${name}`, base);
       if (lock) {
         await writeFile(path.join(workdir, name), lock.content);
@@ -48,17 +54,18 @@ async function resolveNpm(
 
     const fromRange = candidate.currentRange;
     const toRange = bumpRange(fromRange, candidate.latestVersion);
-    const outcome = await resolveUpdate({ workdir, name: candidate.name, fromRange, toRange });
+    const r = await resolver.resolve({ workdir, name: candidate.name, fromRange, toRange });
 
-    if (outcome.status === "unsolvable") {
-      return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, reason: outcome.reason };
+    if (r.status === "unsolvable") {
+      return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: r.warnings, reason: r.reason };
     }
     return {
       candidate,
-      status: outcome.status,
-      changes: outcome.changes,
-      repoFiles: outcome.files.map((f) => ({ path: `${prefix}${f.name}`, content: f.content })),
-      cobumps: outcome.changes.filter((c) => c.cobump).length,
+      status: r.status,
+      changes: r.changes,
+      repoFiles: r.files.map((f) => ({ path: `${prefix}${f.name}`, content: f.content })),
+      cobumps: r.changes.filter((c) => c.cobump).length,
+      warnings: r.warnings,
     };
   } finally {
     await cleanupWorkdir(workdir);
@@ -72,7 +79,7 @@ async function resolvePip(
   candidate: UpdateCandidate,
 ): Promise<CandidateResolution> {
   if (!candidate.currentVersion) {
-    return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, reason: "no pinned version to bump" };
+    return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: "no pinned version to bump" };
   }
   const file = path.posix.basename(candidate.manifestPath); // requirements.txt
   const workdir = await mkdtemp(path.join(tmpdir(), "safebump-pip-"));
@@ -97,6 +104,7 @@ async function resolvePip(
         changes: outcome.changes,
         repoFiles: [{ path: candidate.manifestPath, content: edited }],
         cobumps: 0,
+        warnings: [],
       };
     }
     return {
@@ -105,6 +113,7 @@ async function resolvePip(
       changes: outcome.changes,
       repoFiles: [],
       cobumps: 0,
+      warnings: [],
       reason: outcome.reason,
     };
   } finally {
@@ -122,9 +131,10 @@ export async function resolveCandidate(
   ref: RepoRef,
   base: string,
   candidate: UpdateCandidate,
+  pm: NpmPackageManager = "npm",
 ): Promise<CandidateResolution> {
-  log.debug(`resolving ${candidate.ecosystem} ${candidate.name} in ${candidate.dir}`);
+  log.debug(`resolving ${candidate.ecosystem} ${candidate.name} in ${candidate.dir} (pm=${pm})`);
   return candidate.ecosystem === "pip"
     ? resolvePip(gh, ref, base, candidate)
-    : resolveNpm(gh, ref, base, candidate);
+    : resolveNpmFamily(gh, ref, base, candidate, pm);
 }

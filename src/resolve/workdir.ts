@@ -2,7 +2,15 @@ import { mkdtemp, copyFile, rm, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const COPY_FILES = ["package.json", "package-lock.json", "npm-shrinkwrap.json", ".npmrc"];
+const COPY_FILES = [
+  "package.json",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "yarn.lock",
+  ".npmrc",
+];
 
 /**
  * Create an isolated working copy containing just the files npm needs to

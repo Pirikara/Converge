@@ -77,6 +77,9 @@ function printResolution(res: CandidateResolution): void {
     const mark = ch.cobump ? pc.yellow("  + ") : "  • ";
     process.stdout.write(`${mark}${ch.name}: ${ch.fromRange} → ${ch.toRange}\n`);
   }
+  for (const w of res.warnings) {
+    process.stdout.write(`  ${pc.yellow(`⚠ ${w}`)}\n`);
+  }
 }
 
 function printSafety(verdict: SafetyVerdict): void {
@@ -263,10 +266,11 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
 
     // Guard (npm family only): never write a foreign lockfile for an
     // unsupported package manager — degrade to a read-only report.
+    let pm: NpmPackageManager = "npm";
     if (candidate.ecosystem === "npm") {
-      const pm = await getPm(candidate.dir);
+      pm = await getPm(candidate.dir);
+      process.stdout.write(`  ${pc.dim(`pm: ${pm}`)}\n`);
       if (!isResolvable(pm)) {
-        process.stdout.write(`  ${pc.dim(`pm: ${pm}`)}\n`);
         printImpact(analyzeImpact(candidate, await getSources(candidate), 0, verdict.decision));
         printDeprecation(deprecationOf(candidate, meta));
         process.stdout.write(
@@ -277,7 +281,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       }
     }
 
-    const res = await resolveCandidate(gh, ref, base, candidate);
+    const res = await resolveCandidate(gh, ref, base, candidate, pm);
     printResolution(res);
     if (res.status === "unsolvable") {
       unsolvable++;
