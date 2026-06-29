@@ -3,6 +3,7 @@ import { NpmAdapter } from "../adapters/npm/index.js";
 import { PipAdapter } from "../adapters/pip/index.js";
 import { GoAdapter } from "../adapters/gomod/index.js";
 import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
+import { CargoAdapter } from "../adapters/cargo/index.js";
 import type { EcosystemAdapter, Manifest, UpdateCandidate } from "../adapters/types.js";
 import { resolveManifestPaths } from "./discover.js";
 import { loadConfig } from "../config/load.js";
@@ -35,6 +36,9 @@ export async function scan(repoRootInput: string): Promise<ScanResult> {
   }
   if (config.ecosystems.rubygems.enabled) {
     enabled.push({ adapter: new RubyGemsAdapter(), dirs: config.ecosystems.rubygems.directories });
+  }
+  if (config.ecosystems.cargo.enabled) {
+    enabled.push({ adapter: new CargoAdapter(), dirs: config.ecosystems.cargo.directories });
   }
 
   const manifests: Manifest[] = [];

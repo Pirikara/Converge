@@ -12,6 +12,7 @@ const LOCKFILE_NAMES = new Set([
   "yarn.lock",
   "go.sum",
   "Gemfile.lock",
+  "Cargo.lock",
 ]);
 
 /** Packages present in `next` but not in `prev` (added or version-changed). */

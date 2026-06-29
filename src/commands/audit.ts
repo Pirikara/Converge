@@ -30,7 +30,7 @@ export async function runAudit(dir: string, opts: AuditOptions): Promise<number>
   const repoDir = path.resolve(dir);
   const result = await auditDir(repoDir);
   if (!result) {
-    log.error(`no lockfile found in ${repoDir} (looked for package-lock.json / pnpm-lock.yaml / yarn.lock / Gemfile.lock / go.sum)`);
+    log.error(`no lockfile found in ${repoDir} (looked for package-lock.json / pnpm-lock.yaml / yarn.lock / Gemfile.lock / go.sum / Cargo.lock)`);
     return 1;
   }
 

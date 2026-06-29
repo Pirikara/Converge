@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseNpmLockTree, type LockPackage } from "./lockfile-npm.js";
-import { parsePnpmLock, parseYarnLock, parseGoSum, parseGemfileLock } from "./parsers.js";
+import { parsePnpmLock, parseYarnLock, parseGoSum, parseGemfileLock, parseCargoLock } from "./parsers.js";
 import { parseGoMod } from "../adapters/gomod/gomod.js";
+import { parseCargoToml } from "../adapters/cargo/cargo-toml.js";
 
 export interface EnumeratedLock {
   file: string;
@@ -30,6 +31,8 @@ export function parseLockfile(
       return { ecosystem: "Go", packages: parseGoSum(content) };
     case "Gemfile.lock":
       return { ecosystem: "RubyGems", packages: parseGemfileLock(content).packages };
+    case "Cargo.lock":
+      return { ecosystem: "crates.io", packages: parseCargoLock(content) };
     default:
       return null;
   }
@@ -90,6 +93,15 @@ export async function enumerateLocks(dir: string): Promise<EnumeratedLock[]> {
     const gm = await read(path.join(dir, "go.mod"));
     if (gm) for (const r of parseGoMod(gm)) if (!r.indirect) directs.add(r.name);
     out.push({ file: "go.sum", ecosystem: "Go", packages: parseGoSum(gs), directs });
+  }
+
+  // Cargo
+  const cl = await read(path.join(dir, "Cargo.lock"));
+  if (cl) {
+    const directs = new Set<string>();
+    const ct = await read(path.join(dir, "Cargo.toml"));
+    if (ct) for (const d of parseCargoToml(ct)) directs.add(d.name);
+    out.push({ file: "Cargo.lock", ecosystem: "crates.io", packages: parseCargoLock(cl), directs });
   }
 
   return out;

@@ -58,6 +58,30 @@ export function parseGoSum(content: string): LockPackage[] {
   return dedupe(out);
 }
 
+/** Cargo.lock — `[[package]]` blocks with `name` / `version`. */
+export function parseCargoLock(content: string): LockPackage[] {
+  const out: LockPackage[] = [];
+  let name: string | null = null;
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "[[package]]") {
+      name = null;
+      continue;
+    }
+    const n = /^name = "(.+)"$/.exec(line);
+    if (n) {
+      name = n[1]!;
+      continue;
+    }
+    const v = /^version = "(.+)"$/.exec(line);
+    if (v && name) {
+      out.push({ name, version: v[1]! });
+      name = null;
+    }
+  }
+  return dedupe(out);
+}
+
 /** Gemfile.lock — `specs:` lists every resolved gem; `DEPENDENCIES` lists direct gems. */
 export function parseGemfileLock(content: string): { packages: LockPackage[]; directs: Set<string> } {
   const packages: LockPackage[] = [];
