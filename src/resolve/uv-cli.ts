@@ -73,3 +73,24 @@ export async function uvCompile(dir: string, inputFile: string): Promise<UvResul
     };
   }
 }
+
+export interface UvLockResult {
+  ok: boolean;
+  message: string;
+}
+
+/**
+ * Update uv.lock for a uv/PEP 621 project (`uv lock`) — resolves from metadata,
+ * no build/code execution. Requires a `[project]` table (not Poetry-only).
+ */
+export async function uvLock(dir: string): Promise<UvLockResult> {
+  log.debug(`uv lock (cwd=${dir})`);
+  try {
+    await execFileAsync("uv", ["lock"], { cwd: dir, maxBuffer: 32 * 1024 * 1024 });
+    return { ok: true, message: "resolved" };
+  } catch (err) {
+    const e = err as { stderr?: string; stdout?: string };
+    const out = (e.stderr ?? e.stdout ?? String(err)).trim();
+    return { ok: false, message: out };
+  }
+}

@@ -5,6 +5,8 @@ import { bumpRange } from "../adapters/npm/range.js";
 import type { UpdateCandidate } from "../adapters/types.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
 import { resolvePipUpdate } from "../resolve/pip.js";
+import { uvLock } from "../resolve/uv-cli.js";
+import { editPyproject } from "../adapters/pyproject/parse.js";
 import { resolveGoModule } from "../resolve/go-cli.js";
 import { resolveBundleLock } from "../resolve/ruby-cli.js";
 import { editGemfilePin } from "../adapters/rubygems/gemfile.js";
@@ -241,11 +243,52 @@ async function resolveCargoCrate(
   }
 }
 
+async function resolvePyproject(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  candidate: UpdateCandidate,
+): Promise<CandidateResolution> {
+  if (!candidate.currentVersion) {
+    return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: "no pinned version to bump" };
+  }
+  const dir = candidate.dir;
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-pyproject-"));
+  try {
+    const pp = await gh.getFile(ref, candidate.manifestPath, base);
+    if (!pp) throw new Error(`pyproject.toml not found in ${dir}`);
+    await writeFile(
+      path.join(workdir, "pyproject.toml"),
+      editPyproject(pp.content, candidate.name, candidate.currentVersion, candidate.latestVersion),
+    );
+    const baseLock = await gh.getFile(ref, `${prefix}uv.lock`, base);
+    if (baseLock) await writeFile(path.join(workdir, "uv.lock"), baseLock.content);
+
+    const r = await uvLock(workdir);
+    if (!r.ok) {
+      return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: r.message.split("\n").slice(-4).join("\n") };
+    }
+    const repoFiles = [{ path: candidate.manifestPath, content: await readFile(path.join(workdir, "pyproject.toml"), "utf8") }];
+    if (baseLock) repoFiles.push({ path: `${prefix}uv.lock`, content: await readFile(path.join(workdir, "uv.lock"), "utf8") });
+    return {
+      candidate,
+      status: "resolved",
+      changes: [{ name: candidate.name, fromRange: `==${candidate.currentVersion}`, toRange: `==${candidate.latestVersion}`, cobump: false }],
+      repoFiles,
+      cobumps: 0,
+      warnings: [],
+    };
+  } finally {
+    await cleanupWorkdir(workdir);
+  }
+}
+
 /**
  * Resolve a candidate against the live registry, dispatching by ecosystem.
- * npm: package-lock-only ladder (+ co-bump); pip: uv compile (--no-build);
- * gomod: go get; rubygems: bundle lock; cargo: cargo update --precise. No
- * third-party package code is executed in any path.
+ * npm: package-lock-only ladder (+ co-bump); pip: uv compile (requirements) or
+ * uv lock (pyproject); gomod: go get; rubygems: bundle lock; cargo: cargo
+ * update --precise. No third-party package code is executed in any path.
  */
 export async function resolveCandidate(
   gh: GitHubClient,
@@ -255,7 +298,11 @@ export async function resolveCandidate(
   pm: NpmPackageManager = "npm",
 ): Promise<CandidateResolution> {
   log.debug(`resolving ${candidate.ecosystem} ${candidate.name} in ${candidate.dir} (pm=${pm})`);
-  if (candidate.ecosystem === "pip") return resolvePip(gh, ref, base, candidate);
+  if (candidate.ecosystem === "pip") {
+    return candidate.manifestPath.endsWith("pyproject.toml")
+      ? resolvePyproject(gh, ref, base, candidate)
+      : resolvePip(gh, ref, base, candidate);
+  }
   if (candidate.ecosystem === "gomod") return resolveGo(gh, ref, base, candidate);
   if (candidate.ecosystem === "rubygems") return resolveRuby(gh, ref, base, candidate);
   if (candidate.ecosystem === "cargo") return resolveCargoCrate(gh, ref, base, candidate);

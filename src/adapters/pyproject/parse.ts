@@ -1,6 +1,26 @@
 import type { DependencyEntry } from "../types.js";
 import { parsePin } from "../pip/requirements.js";
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Replace a dependency's exact `==` pin in pyproject.toml (PEP 508 string form). */
+export function editPyproject(
+  content: string,
+  name: string,
+  fromPin: string,
+  toVersion: string,
+): string {
+  const re = new RegExp(
+    `(["']${escapeRe(name)}(?:\\[[^\\]]*\\])?\\s*==\\s*)${escapeRe(fromPin)}(["'])`,
+  );
+  if (!re.test(content)) {
+    throw new Error(`could not locate ${name}==${fromPin} in pyproject.toml`);
+  }
+  return content.replace(re, `$1${toVersion}$2`);
+}
+
 export interface PyDep extends DependencyEntry {
   pin: string | null;
 }

@@ -6,10 +6,12 @@ import { bumpRange } from "../adapters/npm/range.js";
 import { parseRequirements } from "../adapters/pip/requirements.js";
 import { parseGemfile, editGemfilePin } from "../adapters/rubygems/gemfile.js";
 import { parseCargoToml, editCargoToml } from "../adapters/cargo/cargo-toml.js";
+import { parsePyproject, editPyproject } from "../adapters/pyproject/parse.js";
 import { getResolver } from "../resolve/npm-family.js";
 import { decidePackageManager } from "../resolve/pm-detect.js";
 import { resolvePipUpdate } from "../resolve/pip.js";
 import { resolveBundleLock } from "../resolve/ruby-cli.js";
+import { uvLock } from "../resolve/uv-cli.js";
 import { runCargoUpdate } from "../resolve/cargo-cli.js";
 import { prepareWorkdir, cleanupWorkdir } from "../resolve/workdir.js";
 import { log } from "../logger.js";
@@ -230,6 +232,46 @@ async function runResolveCargo(
   }
 }
 
+async function runResolvePyproject(
+  repoDir: string,
+  pkg: string,
+  toVersion: string,
+  opts: ResolveOptions,
+): Promise<number> {
+  const content = await readFile(path.join(repoDir, "pyproject.toml"), "utf8");
+  const dep = parsePyproject(content).find((d) => d.name === pkg);
+  if (!dep) {
+    log.error(`${pkg} is not a dependency in pyproject.toml`);
+    return 1;
+  }
+  if (!dep.pin) {
+    log.error(`${pkg} is not an == pin (got "${dep.range}"); only exact pins are supported`);
+    return 1;
+  }
+  log.info(`resolving ${pc.bold(pkg)} ==${dep.pin} → ==${toVersion} ${pc.dim("(pyproject/uv lock, no code executed)")}`);
+
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-pyproject-"));
+  try {
+    await writeFile(path.join(workdir, "pyproject.toml"), editPyproject(content, pkg, dep.pin, toVersion));
+    const hadLock = await exists(path.join(repoDir, "uv.lock"));
+    if (hadLock) await copyFile(path.join(repoDir, "uv.lock"), path.join(workdir, "uv.lock"));
+    const r = await uvLock(workdir);
+    if (!r.ok) {
+      process.stdout.write(`\n${pc.red("✗ unresolvable")}\n${pc.dim(r.message)}\n`);
+      return 2;
+    }
+    process.stdout.write(`\n${pc.green("✓ resolved")} (${pc.green("direct")})\n  • ${pkg}: ${dep.pin} → ${toVersion}\n`);
+    if (opts.write) {
+      await writeFile(path.join(repoDir, "pyproject.toml"), await readFile(path.join(workdir, "pyproject.toml"), "utf8"));
+      if (hadLock) await writeFile(path.join(repoDir, "uv.lock"), await readFile(path.join(workdir, "uv.lock"), "utf8"));
+      process.stdout.write(`\n${pc.cyan("wrote")} pyproject.toml${hadLock ? ", uv.lock" : ""}\n`);
+    }
+    return 0;
+  } finally {
+    await cleanupWorkdir(workdir);
+  }
+}
+
 export async function runResolve(
   dir: string,
   pkg: string,
@@ -243,12 +285,15 @@ export async function runResolve(
   if (await exists(path.join(repoDir, "requirements.txt"))) {
     return runResolvePip(repoDir, pkg, toVersion, opts);
   }
+  if (await exists(path.join(repoDir, "pyproject.toml"))) {
+    return runResolvePyproject(repoDir, pkg, toVersion, opts);
+  }
   if (await exists(path.join(repoDir, "Gemfile"))) {
     return runResolveRuby(repoDir, pkg, toVersion, opts);
   }
   if (await exists(path.join(repoDir, "Cargo.toml"))) {
     return runResolveCargo(repoDir, pkg, toVersion, opts);
   }
-  log.error(`no package.json, requirements.txt, Gemfile, or Cargo.toml found in ${repoDir}`);
+  log.error(`no package.json, requirements.txt, pyproject.toml, Gemfile, or Cargo.toml found in ${repoDir}`);
   return 1;
 }
