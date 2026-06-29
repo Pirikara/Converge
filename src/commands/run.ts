@@ -16,8 +16,22 @@ import type { SafetyVerdict } from "../safety/types.js";
 import { analyzeImpact, type ImpactReport } from "../impact/analyze.js";
 import { isSourceFile, type SourceFile } from "../impact/usage.js";
 import { detectDeprecation, type DeprecationFinding } from "../deprecation/detect.js";
+import {
+  decidePackageManager,
+  isResolvable,
+  type NpmPackageManager,
+} from "../resolve/pm-detect.js";
 import { fetchPackageMeta } from "../adapters/npm/registry.js";
 import { log } from "../logger.js";
+
+const PROBE_LOCKFILES = [
+  "pnpm-lock.yaml",
+  "bun.lockb",
+  "bun.lock",
+  "yarn.lock",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+];
 
 const SOURCE_FILE_CAP = 500;
 const STALE_DAYS = 365 * 2;
@@ -166,9 +180,41 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
     return files;
   };
 
+  // Detect the package manager per directory so we never write a foreign
+  // lockfile (e.g. a package-lock.json into a pnpm repo).
+  const pmCache = new Map<string, NpmPackageManager>();
+  const getPm = async (dir: string): Promise<NpmPackageManager> => {
+    const cached = pmCache.get(dir);
+    if (cached) return cached;
+    const prefix = dir === "." ? "" : `${dir}/`;
+    const pkg = await gh.getFile(ref, `${prefix}package.json`, base);
+    let packageManagerField: string | null = null;
+    if (pkg) {
+      try {
+        packageManagerField = (JSON.parse(pkg.content) as { packageManager?: string })
+          .packageManager ?? null;
+      } catch {
+        /* ignore */
+      }
+    }
+    let lockfiles: string[] = [];
+    if (!packageManagerField) {
+      const found = await Promise.all(
+        PROBE_LOCKFILES.map(async (lf) =>
+          (await gh.getFile(ref, `${prefix}${lf}`, base)) ? lf : null,
+        ),
+      );
+      lockfiles = found.filter((x): x is string => x != null);
+    }
+    const pm = decidePackageManager({ packageManagerField, lockfiles });
+    pmCache.set(dir, pm);
+    return pm;
+  };
+
   let resolved = 0;
   let unsolvable = 0;
   let blocked = 0;
+  let reportOnly = 0;
   for (const candidate of selected) {
     const header =
       `\n${pc.bold(candidate.name)} ${pc.dim(candidate.currentVersion ?? candidate.currentRange)} → ` +
@@ -193,6 +239,26 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       process.stdout.write(
         `  ${pc.red("⛔ skipped")} — ${verdict.decision === "block" ? "unsafe target" : "within cooldown"}\n`,
       );
+      continue;
+    }
+
+    // Guard: only resolve managers we can safely regenerate a lockfile for.
+    const pm = await getPm(candidate.dir);
+    if (!isResolvable(pm)) {
+      process.stdout.write(`  ${pc.dim(`pm: ${pm}`)}\n`);
+      const impact = analyzeImpact(candidate, await getSources(candidate.dir), 0, verdict.decision);
+      printImpact(impact);
+      printDeprecation(
+        detectDeprecation(
+          { name: candidate.name, currentVersion: candidate.currentVersion, targetVersion: candidate.latestVersion },
+          meta,
+          { staleDays: STALE_DAYS, now: Date.now() },
+        ),
+      );
+      process.stdout.write(
+        `  ${pc.yellow("⊘ resolution skipped")} — ${pm} lockfiles not yet supported (report only, no PR)\n`,
+      );
+      reportOnly++;
       continue;
     }
 
@@ -231,7 +297,8 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
 
   process.stdout.write("\n");
   log.info(
-    `${resolved} resolved, ${blocked} blocked/held, ${unsolvable} unresolvable` +
+    `${resolved} resolved, ${blocked} blocked/held, ${unsolvable} unresolvable, ` +
+      `${reportOnly} report-only` +
       (opts.apply ? "" : ` — re-run with ${pc.bold("--apply")} to open PRs`),
   );
   return 0;
