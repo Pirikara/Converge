@@ -17,7 +17,9 @@ function printFinding(f: AuditFinding): void {
   const scope = f.direct ? pc.dim("direct") : pc.magenta("transitive");
   const malware = f.vulns.some((v) => v.malware);
   const head = malware ? pc.red(pc.bold("MALWARE")) : "vuln";
-  process.stdout.write(`\n  ${head}  ${pc.bold(`${f.name}@${f.version}`)}  [${scope}]\n`);
+  process.stdout.write(
+    `\n  ${head}  ${pc.bold(`${f.name}@${f.version}`)}  ${pc.dim(`[${f.ecosystem}]`)} [${scope}]\n`,
+  );
   for (const v of f.vulns.slice(0, 4)) {
     const tag = v.malware ? pc.red("malware") : sevColor(v.severity)(v.severity);
     process.stdout.write(`    - [${tag}] ${v.id}${v.summary ? ` — ${v.summary}` : ""}\n`);
@@ -28,7 +30,7 @@ export async function runAudit(dir: string, opts: AuditOptions): Promise<number>
   const repoDir = path.resolve(dir);
   const result = await auditDir(repoDir);
   if (!result) {
-    log.error(`no package-lock.json found in ${repoDir} (npm audit only, for now)`);
+    log.error(`no lockfile found in ${repoDir} (looked for package-lock.json / pnpm-lock.yaml / yarn.lock / Gemfile.lock / go.sum)`);
     return 1;
   }
 
@@ -38,7 +40,7 @@ export async function runAudit(dir: string, opts: AuditOptions): Promise<number>
   }
 
   log.info(
-    `audited ${pc.bold(String(result.total))} packages (direct + transitive) from ${result.lockfile}`,
+    `audited ${pc.bold(String(result.total))} packages (direct + transitive) from ${result.lockfiles.join(", ")}`,
   );
 
   if (result.findings.length === 0) {

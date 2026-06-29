@@ -58,12 +58,12 @@ describe("auditPackages", () => {
     const findings = await auditPackages("npm", tree, new Set(["lodash"]), deps);
 
     expect(findings).toHaveLength(2);
-    // malware sorts first
-    expect(findings[0]!.name).toBe("evil");
-    expect(findings[0]!.direct).toBe(false); // transitive (not in directs set)
-    expect(findings[0]!.vulns[0]!.malware).toBe(true);
-    expect(findings[1]!.name).toBe("lodash");
-    expect(findings[1]!.direct).toBe(true);
+    const evil = findings.find((f) => f.name === "evil")!;
+    expect(evil.direct).toBe(false); // transitive (not in directs set)
+    expect(evil.vulns[0]!.malware).toBe(true);
+    expect(evil.ecosystem).toBe("npm");
+    const lodash = findings.find((f) => f.name === "lodash")!;
+    expect(lodash.direct).toBe(true);
     expect(deps.query).toHaveBeenCalledTimes(2); // only the two with batch hits
   });
 });
