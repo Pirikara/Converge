@@ -9,6 +9,8 @@ const COPY_FILES = [
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
   "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
   ".npmrc",
 ];
 

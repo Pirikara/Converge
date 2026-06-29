@@ -1,7 +1,12 @@
 export type NpmPackageManager = "npm" | "yarn" | "pnpm" | "bun";
 
 /** Package managers we can currently resolve a lockfile for. */
-export const RESOLVABLE_PACKAGE_MANAGERS = new Set<NpmPackageManager>(["npm", "pnpm", "yarn"]);
+export const RESOLVABLE_PACKAGE_MANAGERS = new Set<NpmPackageManager>([
+  "npm",
+  "pnpm",
+  "yarn",
+  "bun",
+]);
 
 export function isResolvable(pm: NpmPackageManager): boolean {
   return RESOLVABLE_PACKAGE_MANAGERS.has(pm);

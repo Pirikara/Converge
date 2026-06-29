@@ -4,6 +4,7 @@ import { editPackageJsonRange } from "../adapters/npm/range.js";
 import { resolveUpdate } from "./ladder.js";
 import { regeneratePnpmLockfile } from "./pnpm-cli.js";
 import { regenerateYarnLockfile } from "./yarn-cli.js";
+import { regenerateBunLockfile } from "./bun-cli.js";
 import type { NpmPackageManager } from "./pm-detect.js";
 import type { PackageChange, ResolvedFile } from "./types.js";
 
@@ -104,11 +105,13 @@ function makeDirectResolver(
 
 const pnpmResolver = makeDirectResolver("pnpm", "pnpm-lock.yaml", regeneratePnpmLockfile);
 const yarnResolver = makeDirectResolver("yarn", "yarn.lock", regenerateYarnLockfile);
+const bunResolver = makeDirectResolver("bun", "bun.lock", regenerateBunLockfile);
 
 const RESOLVERS: Record<string, NpmFamilyResolver> = {
   npm: npmResolver,
   pnpm: pnpmResolver,
   yarn: yarnResolver,
+  bun: bunResolver,
 };
 
 export function getResolver(pm: NpmPackageManager): NpmFamilyResolver | null {

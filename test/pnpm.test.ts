@@ -31,7 +31,8 @@ describe("getResolver", () => {
     expect(getResolver("pnpm")?.lockfileNames).toContain("pnpm-lock.yaml");
   });
 
-  it("returns null for unsupported managers", () => {
-    expect(getResolver("bun")).toBeNull();
+  it("provides resolvers for the whole npm family", () => {
+    expect(getResolver("yarn")?.lockfileNames).toContain("yarn.lock");
+    expect(getResolver("bun")?.lockfileNames).toContain("bun.lock");
   });
 });
