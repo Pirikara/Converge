@@ -2,8 +2,12 @@ import { parseLockfile } from "../audit/lockfiles.js";
 import { auditPackages, type AuditFinding } from "../audit/audit.js";
 import type { LockPackage } from "../audit/lockfile-npm.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
-import type { CandidateResolution } from "./apply.js";
 import { log } from "../logger.js";
+
+interface RepoFile {
+  path: string;
+  content: string;
+}
 
 const LOCKFILE_NAMES = new Set([
   "package-lock.json",
@@ -33,9 +37,9 @@ export async function auditIntroduced(
   gh: GitHubClient,
   ref: RepoRef,
   base: string,
-  res: CandidateResolution,
+  repoFiles: RepoFile[],
 ): Promise<AuditFinding[]> {
-  const newFile = res.repoFiles.find((f) => LOCKFILE_NAMES.has(f.path.split("/").pop() ?? ""));
+  const newFile = repoFiles.find((f) => LOCKFILE_NAMES.has(f.path.split("/").pop() ?? ""));
   if (!newFile) return []; // e.g. pip (requirements.txt only)
 
   const parsedNew = parseLockfile(newFile.path, newFile.content);

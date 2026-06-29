@@ -1,7 +1,10 @@
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { bumpRange } from "../adapters/npm/range.js";
+import { bumpRange, editPackageJsonRange } from "../adapters/npm/range.js";
+import { editRequirementPin } from "../adapters/pip/requirements.js";
+import { uvCompile } from "../resolve/uv-cli.js";
+import { regenerateLockfile } from "../resolve/npm-family.js";
 import type { UpdateCandidate } from "../adapters/types.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
 import { resolvePipUpdate } from "../resolve/pip.js";
@@ -318,6 +321,128 @@ async function resolveDockerImage(
  * uv lock (pyproject); gomod: go get; rubygems: bundle lock; cargo: cargo
  * update --precise. No third-party package code is executed in any path.
  */
+export interface GroupResolution {
+  groupName: string;
+  candidates: UpdateCandidate[];
+  status: "resolved" | "unsolvable";
+  changes: PackageChange[];
+  repoFiles: { path: string; content: string }[];
+  warnings: string[];
+  reason?: string;
+}
+
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a GROUP of bumps together: apply every manifest edit, then regenerate
+ * the lockfile ONCE → one consistent change set for a single PR. Supports
+ * npm-family, pip (requirements.txt), and pyproject. Returns null for
+ * ecosystems where combined resolution isn't wired (caller falls back to
+ * individual PRs).
+ */
+export async function resolveGroup(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  groupName: string,
+  candidates: UpdateCandidate[],
+  pm: NpmPackageManager,
+): Promise<GroupResolution | null> {
+  const eco = candidates[0]!.ecosystem;
+  const dir = candidates[0]!.dir;
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const changes: PackageChange[] = [];
+
+  if (eco === "npm") {
+    const lockNames = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "npm-shrinkwrap.json"];
+    const workdir = await mkdtemp(path.join(tmpdir(), "converge-group-"));
+    try {
+      const pkg = await gh.getFile(ref, `${prefix}package.json`, base);
+      if (!pkg) throw new Error(`package.json not found in ${dir}`);
+      let content = pkg.content;
+      for (const c of candidates) {
+        const toRange = bumpRange(c.currentRange, c.latestVersion);
+        content = editPackageJsonRange(content, c.name, c.currentRange, toRange);
+        changes.push({ name: c.name, fromRange: c.currentRange, toRange, cobump: false });
+      }
+      await writeFile(path.join(workdir, "package.json"), content);
+      let lockName: string | null = null;
+      for (const n of lockNames) {
+        const lf = await gh.getFile(ref, `${prefix}${n}`, base);
+        if (lf) {
+          await writeFile(path.join(workdir, n), lf.content);
+          lockName = n;
+          break;
+        }
+      }
+      const r = await regenerateLockfile(pm, workdir);
+      if (!r.ok) {
+        return { groupName, candidates, status: "unsolvable", changes: [], repoFiles: [], warnings: r.warnings, reason: r.stderr.split("\n").slice(-4).join("\n") };
+      }
+      const repoFiles = [{ path: `${prefix}package.json`, content: await readFile(path.join(workdir, "package.json"), "utf8") }];
+      const lf = lockName ?? "package-lock.json";
+      if (await fileExists(path.join(workdir, lf))) {
+        repoFiles.push({ path: `${prefix}${lf}`, content: await readFile(path.join(workdir, lf), "utf8") });
+      }
+      return { groupName, candidates, status: "resolved", changes, repoFiles, warnings: r.warnings };
+    } finally {
+      await cleanupWorkdir(workdir);
+    }
+  }
+
+  if (eco === "pip") {
+    const isPyproject = candidates[0]!.manifestPath.endsWith("pyproject.toml");
+    const file = isPyproject ? "pyproject.toml" : "requirements.txt";
+    const workdir = await mkdtemp(path.join(tmpdir(), "converge-group-"));
+    try {
+      const src = await gh.getFile(ref, candidates[0]!.manifestPath, base);
+      if (!src) throw new Error(`${file} not found`);
+      let content = src.content;
+      for (const c of candidates) {
+        if (!c.currentVersion) continue;
+        content = isPyproject
+          ? editPyproject(content, c.name, c.currentVersion, c.latestVersion)
+          : editRequirementPin(content, c.name, c.currentVersion, c.latestVersion);
+        changes.push({ name: c.name, fromRange: `==${c.currentVersion}`, toRange: `==${c.latestVersion}`, cobump: false });
+      }
+      await writeFile(path.join(workdir, file), content);
+
+      if (isPyproject) {
+        const baseLock = await gh.getFile(ref, `${prefix}uv.lock`, base);
+        if (baseLock) await writeFile(path.join(workdir, "uv.lock"), baseLock.content);
+        const r = await uvLock(workdir);
+        if (!r.ok) return { groupName, candidates, status: "unsolvable", changes: [], repoFiles: [], warnings: [], reason: r.message.split("\n").slice(-4).join("\n") };
+        const repoFiles = [{ path: candidates[0]!.manifestPath, content: await readFile(path.join(workdir, file), "utf8") }];
+        if (baseLock) repoFiles.push({ path: `${prefix}uv.lock`, content: await readFile(path.join(workdir, "uv.lock"), "utf8") });
+        return { groupName, candidates, status: "resolved", changes, repoFiles, warnings: [] };
+      }
+      const r = await uvCompile(workdir, file);
+      if (r.status !== "resolved") {
+        return { groupName, candidates, status: "unsolvable", changes: [], repoFiles: [], warnings: [], reason: r.message };
+      }
+      return {
+        groupName,
+        candidates,
+        status: "resolved",
+        changes,
+        repoFiles: [{ path: candidates[0]!.manifestPath, content: await readFile(path.join(workdir, file), "utf8") }],
+        warnings: [],
+      };
+    } finally {
+      await cleanupWorkdir(workdir);
+    }
+  }
+
+  return null; // grouping not wired for this ecosystem yet
+}
+
 export async function resolveCandidate(
   gh: GitHubClient,
   ref: RepoRef,

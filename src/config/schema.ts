@@ -85,6 +85,16 @@ export const ConfigSchema = z
     deprecation: z
       .object({ openIssues: z.boolean().default(false) })
       .default({}),
+    // Bundle related updates into a single PR. Each group has a name and a list
+    // of name patterns (exact, or `*` wildcard). Converge's own schema.
+    groups: z
+      .array(
+        z.object({
+          name: z.string(),
+          match: z.array(z.string()).default([]),
+        }),
+      )
+      .default([]),
   })
   .strict();
 

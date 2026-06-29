@@ -138,6 +138,28 @@ export function renderPrBody(
   return lines.join("\n");
 }
 
+/** PR body for a grouped update (multiple deps in one PR). */
+export function renderGroupPrBody(
+  groupName: string,
+  changes: { name: string; fromRange: string; toRange: string }[],
+  introduced: AuditFinding[],
+): string {
+  const lines = [
+    `## Converge group: ${groupName}  ·  ${changes.length} updates`,
+    "",
+    "### 🔧 Resolution (F1)",
+    "- ✅ resolved together; lockfile regenerated once (no package code executed)",
+    "- changes:",
+    ...changes.map((c) => `  - \`${c.name}\`: \`${c.fromRange}\` → \`${c.toRange}\``),
+    "",
+    ...renderIntroduced(introduced),
+    "",
+    "---",
+    `🤖 Generated with [Converge](${CONVERGE_URL})`,
+  ];
+  return lines.join("\n");
+}
+
 /** Minimal PR body for Docker base-image bumps (no lockfile/safety/impact). */
 export function renderDockerPrBody(c: UpdateCandidate): string {
   return [

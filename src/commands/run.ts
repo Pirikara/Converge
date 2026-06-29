@@ -8,8 +8,9 @@ import {
 import { ConfigSchema, type Config } from "../config/schema.js";
 import { stripJsonComments } from "../config/load.js";
 import { selectCandidates, branchName, type UpdateType } from "../core/plan.js";
-import { resolveCandidate, type CandidateResolution } from "../core/apply.js";
-import { renderPrBody, renderPrTitle, renderDockerPrBody } from "../core/pr-body.js";
+import { resolveCandidate, resolveGroup, type CandidateResolution, type GroupResolution } from "../core/apply.js";
+import { partitionGroups } from "../core/groups.js";
+import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody } from "../core/pr-body.js";
 import { evaluateSafety } from "../safety/gate.js";
 import { provenanceStatus } from "../safety/provenance.js";
 import type { SafetyVerdict } from "../safety/types.js";
@@ -224,6 +225,31 @@ async function openPrDocker(
   process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
 
+function sanitizeBranch(s: string): string {
+  return s.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+async function openPrGroup(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  gres: GroupResolution,
+  introduced: AuditFinding[],
+): Promise<void> {
+  const c0 = gres.candidates[0]!;
+  const branch = `converge/group/${sanitizeBranch(gres.groupName)}-${sanitizeBranch(c0.dir)}`;
+  if (await gh.branchExists(ref, branch)) {
+    const existing = await gh.findOpenPr(ref, branch);
+    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
+    return;
+  }
+  const baseSha = await gh.getBranchSha(ref, base);
+  const title = `group ${gres.groupName}: ${gres.changes.length} updates`;
+  await gh.commitFiles(ref, { branch, baseSha, message: title, files: gres.repoFiles });
+  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderGroupPrBody(gres.groupName, gres.changes, introduced) });
+  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+}
+
 export async function runRun(repoInput: string, opts: RunOptions): Promise<number> {
   const ref = parseRepoRef(repoInput);
   const gh = new GitHubClient(resolveToken(opts.token));
@@ -301,7 +327,103 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       { staleDays: STALE_DAYS, now: Date.now() },
     );
 
-  for (const candidate of selected) {
+  const safetyOf = (c: UpdateCandidate, meta: PackageMeta) =>
+    evaluateSafety(
+      {
+        ecosystem: OSV_ECOSYSTEM[c.ecosystem],
+        name: c.name,
+        version: osvVersion(c),
+        publishedAt: meta.publishedAt[c.latestVersion],
+        provenance:
+          c.ecosystem === "npm"
+            ? provenanceStatus(meta, c.currentVersion, c.latestVersion)
+            : undefined,
+      },
+      config.safety,
+    );
+
+  // Grouping (F1): bundle configured deps in the same ecosystem+dir into one PR.
+  const { groups, individual } = partitionGroups(selected, config.groups);
+
+  for (const group of groups) {
+    const head = group.candidates[0]!;
+    process.stdout.write(
+      `\n${pc.bold(`group: ${group.name}`)} ` +
+        `${pc.dim(`(${group.candidates.length} updates, ${head.ecosystem}, ${head.dir})`)}\n`,
+    );
+
+    // F2 gate per member; drop unsafe/held members from the group.
+    const safe: UpdateCandidate[] = [];
+    for (const candidate of group.candidates) {
+      const meta = await getMeta(candidate);
+      const verdict = await safetyOf(candidate, meta);
+      if (verdict.decision === "block" || verdict.decision === "hold") {
+        blocked++;
+        process.stdout.write(
+          `  ${pc.red("⛔")} ${candidate.name} — ` +
+            `${verdict.decision === "block" ? "unsafe target" : "within cooldown"} (dropped from group)\n`,
+        );
+        continue;
+      }
+      safe.push(candidate);
+    }
+    if (safe.length === 0) continue;
+    if (safe.length === 1) {
+      individual.push(safe[0]!); // a group of one is just an individual PR
+      continue;
+    }
+
+    let pm: NpmPackageManager = "npm";
+    if (head.ecosystem === "npm") {
+      pm = await getPm(head.dir);
+      if (!isResolvable(pm)) {
+        process.stdout.write(
+          `  ${pc.yellow("⊘ group skipped")} — ${pm} not supported; processing members individually\n`,
+        );
+        individual.push(...safe);
+        continue;
+      }
+    }
+
+    const gres = await resolveGroup(gh, ref, base, group.name, safe, pm);
+    if (!gres) {
+      process.stdout.write(
+        `  ${pc.yellow(`⊘ grouping not wired for ${head.ecosystem}`)}; processing members individually\n`,
+      );
+      individual.push(...safe);
+      continue;
+    }
+    if (gres.status === "unsolvable") {
+      unsolvable++;
+      process.stdout.write(
+        `  ${pc.red("✗ group unsolvable")}${gres.reason ? ` — ${gres.reason}` : ""}\n`,
+      );
+      continue;
+    }
+    for (const ch of gres.changes) {
+      process.stdout.write(`  ${pc.green("✓")} ${ch.name}: ${ch.fromRange} → ${ch.toRange}\n`);
+    }
+
+    const introduced = await auditIntroduced(gh, ref, base, gres.repoFiles);
+    printIntroduced(introduced);
+    if (introduced.some((f) => f.vulns.some((v) => v.malware))) {
+      blocked++;
+      process.stdout.write(
+        `  ${pc.red("⛔ skipped")} — group introduces transitive malware (no PR)\n`,
+      );
+      continue;
+    }
+    resolved++;
+    if (opts.apply) {
+      try {
+        await openPrGroup(gh, ref, base, gres, introduced);
+      } catch (err) {
+        log.error(`group ${group.name}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  for (const candidate of individual) {
     process.stdout.write(
       `\n${pc.bold(candidate.name)} ${pc.dim(candidate.currentVersion ?? candidate.currentRange)} → ` +
         `${pc.bold(candidate.latestVersion)} [${candidate.updateType}] ` +
@@ -329,19 +451,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
 
     // F2 gate first: never resolve/install a dangerous or held version.
     const meta = await getMeta(candidate);
-    const verdict = await evaluateSafety(
-      {
-        ecosystem: OSV_ECOSYSTEM[candidate.ecosystem],
-        name: candidate.name,
-        version: osvVersion(candidate),
-        publishedAt: meta.publishedAt[candidate.latestVersion],
-        provenance:
-          candidate.ecosystem === "npm"
-            ? provenanceStatus(meta, candidate.currentVersion, candidate.latestVersion)
-            : undefined,
-      },
-      config.safety,
-    );
+    const verdict = await safetyOf(candidate, meta);
     printSafety(verdict);
     if (verdict.decision === "block" || verdict.decision === "hold") {
       blocked++;
@@ -382,7 +492,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
 
     // Transitive audit: what does this update INTRODUCE into the dependency
     // tree? Block PRs that pull in malware; flag ones that pull in vulns.
-    const introduced = await auditIntroduced(gh, ref, base, res);
+    const introduced = await auditIntroduced(gh, ref, base, res.repoFiles);
     printIntroduced(introduced);
     if (introduced.some((f) => f.vulns.some((v) => v.malware))) {
       resolved--;

@@ -2,6 +2,7 @@ import { readFile, writeFile, access } from "node:fs/promises";
 import path from "node:path";
 import { editPackageJsonRange } from "../adapters/npm/range.js";
 import { resolveUpdate } from "./ladder.js";
+import { resolveLockfile } from "./npm-cli.js";
 import { regeneratePnpmLockfile } from "./pnpm-cli.js";
 import { regenerateYarnLockfile } from "./yarn-cli.js";
 import { regenerateBunLockfile } from "./bun-cli.js";
@@ -116,4 +117,21 @@ const RESOLVERS: Record<string, NpmFamilyResolver> = {
 
 export function getResolver(pm: NpmPackageManager): NpmFamilyResolver | null {
   return RESOLVERS[pm] ?? null;
+}
+
+const REGEN: Record<string, (workdir: string) => Promise<RegenResult>> = {
+  npm: async (w) => {
+    const r = await resolveLockfile(w);
+    return { ok: r.ok, warnings: [], stderr: r.stderr };
+  },
+  pnpm: regeneratePnpmLockfile,
+  yarn: regenerateYarnLockfile,
+  bun: regenerateBunLockfile,
+};
+
+/** Regenerate the lockfile for `pm` after manifest edits (used for grouped bumps). */
+export function regenerateLockfile(pm: NpmPackageManager, workdir: string): Promise<RegenResult> {
+  const fn = REGEN[pm];
+  if (!fn) return Promise.resolve({ ok: false, warnings: [], stderr: `no resolver for ${pm}` });
+  return fn(workdir);
 }
