@@ -4,7 +4,7 @@
  * Resolution / install / test arrive in M1.
  */
 
-export type EcosystemId = "npm" | "pip" | "gomod" | "cargo";
+export type EcosystemId = "npm" | "pip" | "gomod" | "cargo" | "rubygems";
 
 export type DependencyKind =
   | "prod"

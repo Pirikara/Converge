@@ -4,6 +4,7 @@ import { getVersioning } from "../src/versioning/index.js";
 const semver = getVersioning("semver");
 const pep440 = getVersioning("pep440");
 const go = getVersioning("go");
+const gem = getVersioning("gem");
 
 describe("semver versioning", () => {
   it("compares, classifies, and picks max satisfying", () => {
@@ -53,5 +54,24 @@ describe("go versioning (semver with leading v)", () => {
     expect(go.isValid("v1.2.3")).toBe(true);
     expect(go.diff("v1.2.0", "v2.0.0")).toBe("major");
     expect(go.compare("v1.2.0", "v1.10.0")).toBe(-1);
+  });
+});
+
+describe("gem versioning (Gem::Version)", () => {
+  it("orders prereleases before releases and pads zeros", () => {
+    expect(gem.compare("1.0.0.beta", "1.0.0")).toBe(-1);
+    expect(gem.compare("1.0", "1.0.0")).toBe(0);
+    expect(gem.compare("1.2", "1.10")).toBe(-1);
+    expect(gem.isStable("1.0.0")).toBe(true);
+    expect(gem.isStable("8.1.0.rc1")).toBe(false);
+  });
+
+  it("classifies and supports pessimistic ~>", () => {
+    expect(gem.diff("7.0.0", "8.0.0")).toBe("major");
+    expect(gem.diff("7.0.0", "7.1.0")).toBe("minor");
+    expect(gem.satisfies("7.0.5", "~> 7.0")).toBe(true);
+    expect(gem.satisfies("8.0.0", "~> 7.0")).toBe(false);
+    expect(gem.satisfies("7.0.5", "~> 7.0.1")).toBe(true);
+    expect(gem.satisfies("7.1.0", "~> 7.0.1")).toBe(false);
   });
 });
