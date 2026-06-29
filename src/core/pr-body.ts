@@ -4,6 +4,9 @@ import type { ImpactReport } from "../impact/analyze.js";
 import type { DeprecationFinding } from "../deprecation/detect.js";
 import type { CandidateResolution } from "./apply.js";
 
+// Project repo shown in the PR footer. Override via env when published.
+const SAFEBUMP_URL = process.env.SAFEBUMP_PROJECT_URL ?? "https://github.com/safebump/safebump";
+
 function registryLinks(c: UpdateCandidate): string {
   if (c.ecosystem === "pip") {
     const base = `https://pypi.org/project/${c.name}`;
@@ -104,7 +107,7 @@ export function renderPrBody(
     `- ${registryLinks(c)}`,
     "",
     "---",
-    "🤖 Generated with [SafeBump](https://github.com/Pirikara/SafeBump)",
+    `🤖 Generated with [SafeBump](${SAFEBUMP_URL})`,
   ];
   return lines.join("\n");
 }

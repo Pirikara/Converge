@@ -58,8 +58,8 @@ export class PipAdapter implements EcosystemAdapter {
     const results = await Promise.allSettled(
       manifest.dependencies.map(async (dep) => {
         // First slice: only act on exact pins (==x) — the unambiguous,
-        // actionable case (matches caseforge's langchain==1.0.8). Range floors
-        // (>=) are surfaced later once we model installed versions.
+        // actionable case (e.g. `pkg==1.0.8`). Range floors (>=) are surfaced
+        // later once we model installed versions.
         const pin = "pin" in dep ? (dep as { pin: string | null }).pin : null;
         if (!pin) {
           log.debug(`skip ${dep.name} (${dep.range || "no spec"}; not an == pin)`);
