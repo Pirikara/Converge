@@ -9,7 +9,7 @@ import { ConfigSchema, type Config } from "../config/schema.js";
 import { stripJsonComments } from "../config/load.js";
 import { selectCandidates, branchName, type UpdateType } from "../core/plan.js";
 import { resolveCandidate, type CandidateResolution } from "../core/apply.js";
-import { renderPrBody, renderPrTitle } from "../core/pr-body.js";
+import { renderPrBody, renderPrTitle, renderDockerPrBody } from "../core/pr-body.js";
 import { evaluateSafety } from "../safety/gate.js";
 import { provenanceStatus } from "../safety/provenance.js";
 import type { SafetyVerdict } from "../safety/types.js";
@@ -204,6 +204,26 @@ async function openPr(
   process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
 
+async function openPrDocker(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  res: CandidateResolution,
+): Promise<void> {
+  const branch = branchName(res.candidate);
+  if (await gh.branchExists(ref, branch)) {
+    const existing = await gh.findOpenPr(ref, branch);
+    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
+    return;
+  }
+  const baseSha = await gh.getBranchSha(ref, base);
+  const c = res.candidate;
+  const title = `bump ${c.name} image from ${c.currentRange} to ${c.latestVersion}`;
+  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
+  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderDockerPrBody(c) });
+  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+}
+
 export async function runRun(repoInput: string, opts: RunOptions): Promise<number> {
   const ref = parseRepoRef(repoInput);
   const gh = new GitHubClient(resolveToken(opts.token));
@@ -287,6 +307,25 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
         `${pc.bold(candidate.latestVersion)} [${candidate.updateType}] ` +
         `${pc.dim(`(${candidate.ecosystem}, ${candidate.dir})`)}\n`,
     );
+
+    // Docker base images: no OSV / lockfile / source usage — just bump the tag.
+    if (candidate.ecosystem === "docker") {
+      const res = await resolveCandidate(gh, ref, base, candidate);
+      printResolution(res);
+      if (res.status !== "resolved" && res.status !== "resolved-cobump") {
+        unsolvable++;
+        continue;
+      }
+      resolved++;
+      if (opts.apply) {
+        try {
+          await openPrDocker(gh, ref, base, res);
+        } catch (err) {
+          log.error(`${candidate.name}: ${(err as Error).message}`);
+        }
+      }
+      continue;
+    }
 
     // F2 gate first: never resolve/install a dangerous or held version.
     const meta = await getMeta(candidate);

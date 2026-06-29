@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseDockerfile } from "../src/adapters/docker/dockerfile.js";
+import { parseDockerfile, editDockerfileTag } from "../src/adapters/docker/dockerfile.js";
 import { parseDockerTag, pickNewerDockerTag } from "../src/adapters/docker/versioning.js";
 import { hubRepo } from "../src/adapters/docker/registry.js";
 import { DockerAdapter } from "../src/adapters/docker/index.js";
@@ -14,6 +14,18 @@ FROM ghcr.io/foo/bar@sha256:abc
 FROM redis`;
     const deps = parseDockerfile(df);
     expect(deps.map((d) => `${d.name}:${d.range}`)).toEqual(["node:18-alpine", "python:3.11"]);
+  });
+});
+
+describe("editDockerfileTag", () => {
+  it("replaces only the matching FROM tag", () => {
+    const df = `FROM node:18-alpine AS build\nFROM python:3.9\n`;
+    const out = editDockerfileTag(df, "node", "18-alpine", "20-alpine");
+    expect(out).toContain("FROM node:20-alpine AS build");
+    expect(out).toContain("FROM python:3.9");
+  });
+  it("throws when the image:tag is absent", () => {
+    expect(() => editDockerfileTag("FROM node:18\n", "node", "20", "22")).toThrow();
   });
 });
 

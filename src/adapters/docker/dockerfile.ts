@@ -1,5 +1,26 @@
 import type { DependencyEntry } from "../types.js";
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Replace a base image's tag in a Dockerfile FROM line. */
+export function editDockerfileTag(
+  content: string,
+  image: string,
+  fromTag: string,
+  toTag: string,
+): string {
+  const re = new RegExp(
+    `^(FROM\\s+(?:--platform=\\S+\\s+)?${escapeRe(image)}:)${escapeRe(fromTag)}\\b`,
+    "m",
+  );
+  if (!re.test(content)) {
+    throw new Error(`could not locate FROM ${image}:${fromTag} in Dockerfile`);
+  }
+  return content.replace(re, `$1${toTag}`);
+}
+
 /**
  * Parse `FROM image:tag` lines from a Dockerfile. Skips `scratch`, digest-pinned
  * images, references to earlier build stages, and untagged images. The image is

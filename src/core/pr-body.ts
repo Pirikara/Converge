@@ -138,6 +138,23 @@ export function renderPrBody(
   return lines.join("\n");
 }
 
+/** Minimal PR body for Docker base-image bumps (no lockfile/safety/impact). */
+export function renderDockerPrBody(c: UpdateCandidate): string {
+  return [
+    `## Converge: ${c.name} ${c.currentRange} → ${c.latestVersion}`,
+    "",
+    "### 🐳 Base image",
+    `- updates the \`FROM ${c.name}\` tag in \`${c.dir}/Dockerfile\` (${c.updateType})`,
+    `- \`${c.name}:${c.currentRange}\` → \`${c.name}:${c.latestVersion}\``,
+    "",
+    "### Links",
+    `- [Docker Hub](https://hub.docker.com/_/${c.name.includes("/") ? c.name : c.name}/tags)`,
+    "",
+    "---",
+    `🤖 Generated with [Converge](${CONVERGE_URL})`,
+  ].join("\n");
+}
+
 /** PR title, including a co-bump count when applicable. */
 export function renderPrTitle(c: UpdateCandidate, res: CandidateResolution): string {
   const from = c.currentVersion ?? c.currentRange;

@@ -75,6 +75,7 @@ describe("selectCandidates", () => {
 describe("branchName", () => {
   it("encodes dir, name, and target version idempotently", () => {
     const c = {
+      ecosystem: "npm",
       dir: "frontend",
       name: "@scope/pkg",
       latestVersion: "2.0.0",

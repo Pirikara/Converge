@@ -5,6 +5,7 @@ import { GoAdapter } from "../adapters/gomod/index.js";
 import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
 import { CargoAdapter } from "../adapters/cargo/index.js";
 import { PyProjectAdapter } from "../adapters/pyproject/index.js";
+import { DockerAdapter } from "../adapters/docker/index.js";
 import type { EcosystemAdapter, UpdateCandidate } from "../adapters/types.js";
 import type { Config } from "../config/schema.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
@@ -23,10 +24,10 @@ function sanitize(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-/** Deterministic, idempotent branch name encoding the target version. */
+/** Deterministic, idempotent branch name encoding the ecosystem + target version. */
 export function branchName(c: UpdateCandidate): string {
   const scope = c.dir === "." ? "" : `${sanitize(c.dir)}-`;
-  return `converge/npm/${scope}${sanitize(c.name)}-${c.latestVersion}`;
+  return `converge/${c.ecosystem}/${scope}${sanitize(c.name)}-${sanitize(c.latestVersion)}`;
 }
 
 /**
@@ -58,6 +59,9 @@ export async function selectCandidates(
   }
   if (config.ecosystems.cargo.enabled) {
     ecosystems.push({ adapter: new CargoAdapter(), dirs: config.ecosystems.cargo.directories });
+  }
+  if (config.ecosystems.docker.enabled) {
+    ecosystems.push({ adapter: new DockerAdapter(), dirs: config.ecosystems.docker.directories });
   }
 
   const selected: UpdateCandidate[] = [];
