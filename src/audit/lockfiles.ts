@@ -12,6 +12,29 @@ export interface EnumeratedLock {
   directs: Set<string>;
 }
 
+/** Parse a lockfile's full tree given its filename + content (no IO). */
+export function parseLockfile(
+  name: string,
+  content: string,
+): { ecosystem: string; packages: LockPackage[] } | null {
+  const base = name.split("/").pop() ?? name;
+  switch (base) {
+    case "package-lock.json":
+    case "npm-shrinkwrap.json":
+      return { ecosystem: "npm", packages: parseNpmLockTree(content) };
+    case "pnpm-lock.yaml":
+      return { ecosystem: "npm", packages: parsePnpmLock(content) };
+    case "yarn.lock":
+      return { ecosystem: "npm", packages: parseYarnLock(content) };
+    case "go.sum":
+      return { ecosystem: "Go", packages: parseGoSum(content) };
+    case "Gemfile.lock":
+      return { ecosystem: "RubyGems", packages: parseGemfileLock(content).packages };
+    default:
+      return null;
+  }
+}
+
 async function read(p: string): Promise<string | null> {
   try {
     return await readFile(p, "utf8");

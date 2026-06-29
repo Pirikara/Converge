@@ -3,6 +3,25 @@ import type { SafetyVerdict } from "../safety/types.js";
 import type { ImpactReport } from "../impact/analyze.js";
 import type { DeprecationFinding } from "../deprecation/detect.js";
 import type { CandidateResolution } from "./apply.js";
+import type { AuditFinding } from "../audit/audit.js";
+
+function renderIntroduced(introduced: AuditFinding[]): string[] {
+  const lines = ["### 🌳 Transitive impact (F2)"];
+  if (introduced.length === 0) {
+    lines.push("- ✅ introduces no transitive packages with known malware/vulnerabilities");
+    return lines;
+  }
+  lines.push(`- ⚠️ this update pulls in **${introduced.length}** risky transitive package(s):`);
+  for (const f of introduced) {
+    const mal = f.vulns.some((v) => v.malware);
+    const top = f.vulns[0]!;
+    lines.push(
+      `  - ${mal ? "**MALWARE**" : top.severity} \`${f.name}@${f.version}\` — ${top.id}` +
+        (top.summary ? `: ${top.summary}` : ""),
+    );
+  }
+  return lines;
+}
 
 // Project repo shown in the PR footer. Override via env when published.
 const CONVERGE_URL = process.env.CONVERGE_PROJECT_URL ?? "https://github.com/converge/converge";
@@ -94,6 +113,7 @@ export function renderPrBody(
   safety: SafetyVerdict,
   impact: ImpactReport,
   deprecation: DeprecationFinding[],
+  introduced: AuditFinding[] = [],
 ): string {
   const from = c.currentVersion ?? c.currentRange;
   const lines = [
@@ -102,6 +122,8 @@ export function renderPrBody(
     ...renderResolution(c, res),
     "",
     ...renderSafety(safety),
+    "",
+    ...renderIntroduced(introduced),
     "",
     ...renderImpact(impact),
     "",

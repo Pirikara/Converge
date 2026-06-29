@@ -16,6 +16,8 @@ import type { SafetyVerdict } from "../safety/types.js";
 import { analyzeImpact, type ImpactReport } from "../impact/analyze.js";
 import { isSourceFile, isPythonSourceFile, isGoSourceFile, isRubySourceFile, type SourceFile } from "../impact/usage.js";
 import { detectDeprecation, type DeprecationFinding } from "../deprecation/detect.js";
+import { auditIntroduced } from "../core/update-audit.js";
+import type { AuditFinding } from "../audit/audit.js";
 import {
   decidePackageManager,
   isResolvable,
@@ -153,6 +155,21 @@ function printDeprecation(findings: DeprecationFinding[]): void {
   }
 }
 
+function printIntroduced(findings: AuditFinding[]): void {
+  if (findings.length === 0) return;
+  const malware = findings.some((f) => f.vulns.some((v) => v.malware));
+  const color = malware ? pc.red : pc.yellow;
+  process.stdout.write(
+    `  ${color(`⚡ introduces ${findings.length} risky transitive package(s)`)}\n`,
+  );
+  for (const f of findings.slice(0, 5)) {
+    const m = f.vulns.some((v) => v.malware);
+    process.stdout.write(
+      `    ${pc.dim(`- ${m ? "MALWARE" : "vuln"} ${f.name}@${f.version} (${f.vulns[0]!.id})`)}\n`,
+    );
+  }
+}
+
 async function openPr(
   gh: GitHubClient,
   ref: RepoRef,
@@ -161,6 +178,7 @@ async function openPr(
   safety: SafetyVerdict,
   impact: ImpactReport,
   deprecation: DeprecationFinding[],
+  introduced: AuditFinding[],
 ): Promise<void> {
   const branch = branchName(res.candidate);
   if (await gh.branchExists(ref, branch)) {
@@ -177,7 +195,7 @@ async function openPr(
     head: branch,
     base,
     title,
-    body: renderPrBody(res.candidate, res, safety, impact, deprecation),
+    body: renderPrBody(res.candidate, res, safety, impact, deprecation, introduced),
   });
   process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
@@ -319,6 +337,19 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
     }
     resolved++;
 
+    // Transitive audit: what does this update INTRODUCE into the dependency
+    // tree? Block PRs that pull in malware; flag ones that pull in vulns.
+    const introduced = await auditIntroduced(gh, ref, base, res);
+    printIntroduced(introduced);
+    if (introduced.some((f) => f.vulns.some((v) => v.malware))) {
+      resolved--;
+      blocked++;
+      process.stdout.write(
+        `  ${pc.red("⛔ skipped")} — update introduces transitive malware (no PR)\n`,
+      );
+      continue;
+    }
+
     const impact = analyzeImpact(candidate, await getSources(candidate), res.cobumps, verdict.decision);
     printImpact(impact);
     const deprecation = deprecationOf(candidate, meta);
@@ -326,7 +357,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
 
     if (opts.apply) {
       try {
-        await openPr(gh, ref, base, res, verdict, impact, deprecation);
+        await openPr(gh, ref, base, res, verdict, impact, deprecation, introduced);
       } catch (err) {
         log.error(`${candidate.name}: ${(err as Error).message}`);
       }
