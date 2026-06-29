@@ -37,6 +37,7 @@ const OSV_ECOSYSTEM: Record<EcosystemId, string> = {
   gomod: "Go",
   rubygems: "RubyGems",
   cargo: "crates.io",
+  docker: "", // base images aren't OSV-indexed; Docker is scan-only
 };
 
 function getMeta(c: UpdateCandidate): Promise<PackageMeta> {

@@ -5,6 +5,7 @@ import { GoAdapter } from "../adapters/gomod/index.js";
 import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
 import { CargoAdapter } from "../adapters/cargo/index.js";
 import { PyProjectAdapter } from "../adapters/pyproject/index.js";
+import { DockerAdapter } from "../adapters/docker/index.js";
 import type { EcosystemAdapter, Manifest, UpdateCandidate } from "../adapters/types.js";
 import { resolveManifestPaths } from "./discover.js";
 import { loadConfig } from "../config/load.js";
@@ -41,6 +42,9 @@ export async function scan(repoRootInput: string): Promise<ScanResult> {
   }
   if (config.ecosystems.cargo.enabled) {
     enabled.push({ adapter: new CargoAdapter(), dirs: config.ecosystems.cargo.directories });
+  }
+  if (config.ecosystems.docker.enabled) {
+    enabled.push({ adapter: new DockerAdapter(), dirs: config.ecosystems.docker.directories });
   }
 
   const manifests: Manifest[] = [];
