@@ -14,7 +14,7 @@ import { evaluateSafety } from "../safety/gate.js";
 import { provenanceStatus } from "../safety/provenance.js";
 import type { SafetyVerdict } from "../safety/types.js";
 import { analyzeImpact, type ImpactReport } from "../impact/analyze.js";
-import { isSourceFile, isPythonSourceFile, isGoSourceFile, type SourceFile } from "../impact/usage.js";
+import { isSourceFile, isPythonSourceFile, isGoSourceFile, isRubySourceFile, type SourceFile } from "../impact/usage.js";
 import { detectDeprecation, type DeprecationFinding } from "../deprecation/detect.js";
 import {
   decidePackageManager,
@@ -24,6 +24,7 @@ import {
 import { fetchPackageMeta } from "../adapters/npm/registry.js";
 import { fetchPyPiMeta } from "../adapters/pip/pypi.js";
 import { fetchGoMeta } from "../adapters/gomod/proxy.js";
+import { fetchGemMeta } from "../adapters/rubygems/rubygems.js";
 import type { EcosystemId, PackageMeta, UpdateCandidate } from "../adapters/types.js";
 import { log } from "../logger.js";
 
@@ -38,12 +39,14 @@ const OSV_ECOSYSTEM: Record<EcosystemId, string> = {
 function getMeta(c: UpdateCandidate): Promise<PackageMeta> {
   if (c.ecosystem === "pip") return fetchPyPiMeta(c.name);
   if (c.ecosystem === "gomod") return fetchGoMeta(c.name);
+  if (c.ecosystem === "rubygems") return fetchGemMeta(c.name);
   return fetchPackageMeta(c.name);
 }
 
 function sourcePredicate(c: UpdateCandidate): (p: string) => boolean {
   if (c.ecosystem === "pip") return isPythonSourceFile;
   if (c.ecosystem === "gomod") return isGoSourceFile;
+  if (c.ecosystem === "rubygems") return isRubySourceFile;
   return isSourceFile;
 }
 

@@ -4,9 +4,11 @@ import path from "node:path";
 import pc from "picocolors";
 import { bumpRange } from "../adapters/npm/range.js";
 import { parseRequirements } from "../adapters/pip/requirements.js";
+import { parseGemfile, editGemfilePin } from "../adapters/rubygems/gemfile.js";
 import { getResolver } from "../resolve/npm-family.js";
 import { decidePackageManager } from "../resolve/pm-detect.js";
 import { resolvePipUpdate } from "../resolve/pip.js";
+import { resolveBundleLock } from "../resolve/ruby-cli.js";
 import { prepareWorkdir, cleanupWorkdir } from "../resolve/workdir.js";
 import { log } from "../logger.js";
 
@@ -147,6 +149,46 @@ async function runResolvePip(
   }
 }
 
+async function runResolveRuby(
+  repoDir: string,
+  pkg: string,
+  toVersion: string,
+  opts: ResolveOptions,
+): Promise<number> {
+  const content = await readFile(path.join(repoDir, "Gemfile"), "utf8");
+  const dep = parseGemfile(content).find((d) => d.name === pkg);
+  if (!dep) {
+    log.error(`${pkg} is not in the Gemfile`);
+    return 1;
+  }
+  if (!dep.pin) {
+    log.error(`${pkg} is not an exact pin (got "${dep.range}"); only exact pins are supported`);
+    return 1;
+  }
+  log.info(`resolving ${pc.bold(pkg)} ${dep.pin} → ${toVersion} ${pc.dim("(rubygems/bundler, no gem code executed)")}`);
+
+  const workdir = await mkdtemp(path.join(tmpdir(), "safebump-ruby-"));
+  try {
+    await writeFile(path.join(workdir, "Gemfile"), editGemfilePin(content, pkg, dep.pin, toVersion));
+    if (await exists(path.join(repoDir, "Gemfile.lock"))) {
+      await copyFile(path.join(repoDir, "Gemfile.lock"), path.join(workdir, "Gemfile.lock"));
+    }
+    const r = await resolveBundleLock(workdir);
+    if (!r.ok) {
+      process.stdout.write(`\n${pc.red("✗ unresolvable")}\n${pc.dim(r.stderr)}\n`);
+      return 2;
+    }
+    process.stdout.write(`\n${pc.green("✓ resolved")} (${pc.green("direct")})\n  • ${pkg}: ${dep.pin} → ${toVersion}\n`);
+    if (opts.write) {
+      for (const f of r.files) await writeFile(path.join(repoDir, f.name), f.content);
+      process.stdout.write(`\n${pc.cyan("wrote")} ${r.files.map((f) => f.name).join(", ")}\n`);
+    }
+    return 0;
+  } finally {
+    await cleanupWorkdir(workdir);
+  }
+}
+
 export async function runResolve(
   dir: string,
   pkg: string,
@@ -160,6 +202,9 @@ export async function runResolve(
   if (await exists(path.join(repoDir, "requirements.txt"))) {
     return runResolvePip(repoDir, pkg, toVersion, opts);
   }
-  log.error(`no package.json or requirements.txt found in ${repoDir}`);
+  if (await exists(path.join(repoDir, "Gemfile"))) {
+    return runResolveRuby(repoDir, pkg, toVersion, opts);
+  }
+  log.error(`no package.json, requirements.txt, or Gemfile found in ${repoDir}`);
   return 1;
 }

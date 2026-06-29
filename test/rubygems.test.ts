@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseGemfile, gemPin } from "../src/adapters/rubygems/gemfile.js";
+import { parseGemfile, gemPin, editGemfilePin } from "../src/adapters/rubygems/gemfile.js";
 import { RubyGemsAdapter } from "../src/adapters/rubygems/index.js";
+import { findRubyUsage } from "../src/impact/usage.js";
 
 const GEMFILE = `source "https://rubygems.org"
 
@@ -31,6 +32,24 @@ describe("parseGemfile", () => {
     expect(gemPin("= 7.0.0")).toBe("7.0.0");
     expect(gemPin("~> 7.0")).toBeNull();
     expect(gemPin(">= 1.1, < 2.0")).toBeNull();
+  });
+
+  it("editGemfilePin replaces the targeted pin", () => {
+    const g = 'gem "rails", "7.0.0"\ngem "rack", "2.0.0"\n';
+    expect(editGemfilePin(g, "rails", "7.0.0", "7.1.3")).toContain('gem "rails", "7.1.3"');
+    expect(editGemfilePin(g, "rails", "7.0.0", "7.1.3")).toContain('gem "rack", "2.0.0"');
+    expect(() => editGemfilePin(g, "rails", "9.9.9", "7.1.3")).toThrow();
+  });
+});
+
+describe("findRubyUsage", () => {
+  const files = [
+    { path: "app.rb", content: "require 'nokogiri'\nrequire \"json\"\n" },
+    { path: "lib/x.rb", content: "require 'nokogiri/xml'\n" },
+  ];
+  it("matches require of the gem and subpaths", () => {
+    expect(findRubyUsage("nokogiri", files).files).toBe(2);
+    expect(findRubyUsage("sinatra", files).files).toBe(0);
   });
 });
 

@@ -13,6 +13,26 @@ export function gemPin(req: string): string | null {
   return m ? m[1]! : null;
 }
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Replace a gem's exact pin in Gemfile text with a minimal edit. */
+export function editGemfilePin(
+  content: string,
+  name: string,
+  fromPin: string,
+  toVersion: string,
+): string {
+  const re = new RegExp(
+    `(gem\\s+['"]${escapeRe(name)}['"]\\s*,\\s*['"]=?\\s*)${escapeRe(fromPin)}(['"])`,
+  );
+  if (!re.test(content)) {
+    throw new Error(`could not locate gem "${name}" pinned to ${fromPin} in Gemfile`);
+  }
+  return content.replace(re, `$1${toVersion}$2`);
+}
+
 /**
  * Parse `gem` declarations from a Gemfile (best-effort). Captures the gem name
  * and its version requirement(s); skips groups/sources/options. Version-less

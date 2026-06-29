@@ -6,6 +6,8 @@ import type { UpdateCandidate } from "../adapters/types.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
 import { resolvePipUpdate } from "../resolve/pip.js";
 import { resolveGoModule } from "../resolve/go-cli.js";
+import { resolveBundleLock } from "../resolve/ruby-cli.js";
+import { editGemfilePin } from "../adapters/rubygems/gemfile.js";
 import { getResolver } from "../resolve/npm-family.js";
 import type { NpmPackageManager } from "../resolve/pm-detect.js";
 import { cleanupWorkdir } from "../resolve/workdir.js";
@@ -155,10 +157,50 @@ async function resolveGo(
   }
 }
 
+async function resolveRuby(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  candidate: UpdateCandidate,
+): Promise<CandidateResolution> {
+  if (!candidate.currentVersion) {
+    return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: "no pinned version to bump" };
+  }
+  const dir = candidate.dir;
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const workdir = await mkdtemp(path.join(tmpdir(), "safebump-ruby-"));
+  try {
+    const gemfile = await gh.getFile(ref, candidate.manifestPath, base);
+    if (!gemfile) throw new Error(`Gemfile not found in ${dir}`);
+    await writeFile(
+      path.join(workdir, "Gemfile"),
+      editGemfilePin(gemfile.content, candidate.name, candidate.currentVersion, candidate.latestVersion),
+    );
+    const lock = await gh.getFile(ref, `${prefix}Gemfile.lock`, base);
+    if (lock) await writeFile(path.join(workdir, "Gemfile.lock"), lock.content);
+
+    const r = await resolveBundleLock(workdir);
+    if (!r.ok) {
+      return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: r.stderr.split("\n").slice(-4).join("\n") };
+    }
+    return {
+      candidate,
+      status: "resolved",
+      changes: [{ name: candidate.name, fromRange: candidate.currentRange, toRange: candidate.latestVersion, cobump: false }],
+      repoFiles: r.files.map((f) => ({ path: `${prefix}${f.name}`, content: f.content })),
+      cobumps: 0,
+      warnings: [],
+    };
+  } finally {
+    await cleanupWorkdir(workdir);
+  }
+}
+
 /**
  * Resolve a candidate against the live registry, dispatching by ecosystem.
  * npm: package-lock-only ladder (+ co-bump); pip: uv compile (--no-build);
- * gomod: go get (module mode). No package code is executed in any path.
+ * gomod: go get (module mode); rubygems: bundle lock. No third-party package
+ * code is executed in any path.
  */
 export async function resolveCandidate(
   gh: GitHubClient,
@@ -170,5 +212,6 @@ export async function resolveCandidate(
   log.debug(`resolving ${candidate.ecosystem} ${candidate.name} in ${candidate.dir} (pm=${pm})`);
   if (candidate.ecosystem === "pip") return resolvePip(gh, ref, base, candidate);
   if (candidate.ecosystem === "gomod") return resolveGo(gh, ref, base, candidate);
+  if (candidate.ecosystem === "rubygems") return resolveRuby(gh, ref, base, candidate);
   return resolveNpmFamily(gh, ref, base, candidate, pm);
 }

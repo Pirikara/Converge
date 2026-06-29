@@ -32,6 +32,32 @@ export function isGoSourceFile(path: string): boolean {
   return /\.go$/.test(path);
 }
 
+export function isRubySourceFile(path: string): boolean {
+  return /\.(rb|rake)$|(^|\/)Rakefile$/.test(path);
+}
+
+/**
+ * Find where a gem is required across Ruby files (F3.3 for RubyGems). The
+ * require name often differs from the gem name; best-effort matches the gem
+ * name and its hyphen→slash form (e.g. activerecord vs active_record varies).
+ */
+export function findRubyUsage(gem: string, files: SourceFile[]): UsageReport {
+  const roots = Array.from(new Set([gem, gem.replace(/-/g, "/")])).map(escapeRe).join("|");
+  const re = new RegExp(`require(?:_relative)?\\s+['"](${roots})(?:/[^'"]*)?['"]`, "g");
+  const sites: ImportSite[] = [];
+  const filesWith = new Set<string>();
+  for (const f of files) {
+    let m: RegExpExecArray | null;
+    re.lastIndex = 0;
+    while ((m = re.exec(f.content))) {
+      sites.push({ file: f.path, line: lineOf(f.content, m.index), symbols: [], kind: "require" });
+      filesWith.add(f.path);
+    }
+  }
+  sites.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+  return { pkg: gem, files: filesWith.size, sites };
+}
+
 /**
  * Find where a Go module is imported across .go files (F3.3 for Go). Go imports
  * use the full module path (or a subpackage) in quotes, e.g. `import "M/sub"`.

@@ -2,6 +2,7 @@ import path from "node:path";
 import { NpmAdapter } from "../adapters/npm/index.js";
 import { PipAdapter } from "../adapters/pip/index.js";
 import { GoAdapter } from "../adapters/gomod/index.js";
+import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
 import type { EcosystemAdapter, UpdateCandidate } from "../adapters/types.js";
 import type { Config } from "../config/schema.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
@@ -48,6 +49,9 @@ export async function selectCandidates(
   }
   if (config.ecosystems.gomod.enabled) {
     ecosystems.push({ adapter: new GoAdapter(), dirs: config.ecosystems.gomod.directories });
+  }
+  if (config.ecosystems.rubygems.enabled) {
+    ecosystems.push({ adapter: new RubyGemsAdapter(), dirs: config.ecosystems.rubygems.directories });
   }
 
   const selected: UpdateCandidate[] = [];
