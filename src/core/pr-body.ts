@@ -5,7 +5,7 @@ import type { DeprecationFinding } from "../deprecation/detect.js";
 import type { CandidateResolution } from "./apply.js";
 
 // Project repo shown in the PR footer. Override via env when published.
-const SAFEBUMP_URL = process.env.SAFEBUMP_PROJECT_URL ?? "https://github.com/safebump/safebump";
+const CONVERGE_URL = process.env.CONVERGE_PROJECT_URL ?? "https://github.com/converge/converge";
 
 function registryLinks(c: UpdateCandidate): string {
   if (c.ecosystem === "pip") {
@@ -97,7 +97,7 @@ export function renderPrBody(
 ): string {
   const from = c.currentVersion ?? c.currentRange;
   const lines = [
-    `## SafeBump: ${c.name} ${from} → ${c.latestVersion}  ·  Risk: ${impact.risk.risk}`,
+    `## Converge: ${c.name} ${from} → ${c.latestVersion}  ·  Risk: ${impact.risk.risk}`,
     "",
     ...renderResolution(c, res),
     "",
@@ -111,7 +111,7 @@ export function renderPrBody(
     `- ${registryLinks(c)}`,
     "",
     "---",
-    `🤖 Generated with [SafeBump](${SAFEBUMP_URL})`,
+    `🤖 Generated with [Converge](${CONVERGE_URL})`,
   ];
   return lines.join("\n");
 }

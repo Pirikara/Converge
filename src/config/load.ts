@@ -3,7 +3,7 @@ import path from "node:path";
 import { ConfigSchema, defaultConfig, type Config } from "./schema.js";
 import { log } from "../logger.js";
 
-const CONFIG_FILENAMES = ["safebump.json", "safebump.json5", ".safebumprc.json"];
+const CONFIG_FILENAMES = ["converge.json", "converge.json5", ".convergerc.json"];
 
 /**
  * Strip JSON5-style comments so users can annotate config (SPEC §9).

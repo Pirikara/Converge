@@ -18,12 +18,12 @@ export function parseRepoRef(input: string): RepoRef {
 export function resolveToken(explicit?: string): string {
   const token =
     explicit ??
-    process.env.SAFEBUMP_TOKEN ??
+    process.env.CONVERGE_TOKEN ??
     process.env.GITHUB_TOKEN ??
     process.env.GH_TOKEN;
   if (!token) {
     throw new Error(
-      "no GitHub token found (set SAFEBUMP_TOKEN or GITHUB_TOKEN, or pass --token)",
+      "no GitHub token found (set CONVERGE_TOKEN or GITHUB_TOKEN, or pass --token)",
     );
   }
   return token;
@@ -34,10 +34,10 @@ export class GitHubClient {
 
   constructor(token: string) {
     // Route Octokit's internal request logs to our debug channel so expected
-    // 404s (e.g. missing safebump.json) don't surface as warnings.
+    // 404s (e.g. missing converge.json) don't surface as warnings.
     this.octokit = new Octokit({
       auth: token,
-      userAgent: "safebump",
+      userAgent: "converge",
       log: {
         debug: (m: string) => log.debug(m),
         info: (m: string) => log.debug(m),

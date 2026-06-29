@@ -24,7 +24,7 @@ describe("NpmAdapter", () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(path.join(tmpdir(), "safebump-"));
+    dir = await mkdtemp(path.join(tmpdir(), "converge-"));
     fetchMock.mockReset();
   });
   afterEach(async () => {

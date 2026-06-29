@@ -1,7 +1,7 @@
 import type { PackageMeta } from "../types.js";
 import { log } from "../../logger.js";
 
-const GOPROXY = process.env.SAFEBUMP_GOPROXY ?? "https://proxy.golang.org";
+const GOPROXY = process.env.CONVERGE_GOPROXY ?? "https://proxy.golang.org";
 
 /** Go module proxy escaping: uppercase letters become `!` + lowercase. */
 export function escapeModulePath(p: string): string {

@@ -115,7 +115,7 @@ async function runResolvePip(
   }
   log.info(`resolving ${pc.bold(pkg)} ==${dep.pin} → ==${toVersion} ${pc.dim("(pip/uv, no code executed)")}`);
 
-  const workdir = await mkdtemp(path.join(tmpdir(), "safebump-pip-"));
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-pip-"));
   try {
     await copyFile(path.join(repoDir, file), path.join(workdir, file));
     const outcome = await resolvePipUpdate({
@@ -167,7 +167,7 @@ async function runResolveRuby(
   }
   log.info(`resolving ${pc.bold(pkg)} ${dep.pin} → ${toVersion} ${pc.dim("(rubygems/bundler, no gem code executed)")}`);
 
-  const workdir = await mkdtemp(path.join(tmpdir(), "safebump-ruby-"));
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-ruby-"));
   try {
     await writeFile(path.join(workdir, "Gemfile"), editGemfilePin(content, pkg, dep.pin, toVersion));
     if (await exists(path.join(repoDir, "Gemfile.lock"))) {

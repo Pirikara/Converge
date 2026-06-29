@@ -42,7 +42,7 @@ async function resolveNpmFamily(
   }
   const dir = candidate.dir;
   const prefix = dir === "." ? "" : `${dir}/`;
-  const workdir = await mkdtemp(path.join(tmpdir(), "safebump-apply-"));
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-apply-"));
   try {
     const pkg = await gh.getFile(ref, `${prefix}package.json`, base);
     if (!pkg) throw new Error(`package.json not found in ${dir}`);
@@ -85,7 +85,7 @@ async function resolvePip(
     return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: "no pinned version to bump" };
   }
   const file = path.posix.basename(candidate.manifestPath); // requirements.txt
-  const workdir = await mkdtemp(path.join(tmpdir(), "safebump-pip-"));
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-pip-"));
   try {
     const src = await gh.getFile(ref, candidate.manifestPath, base);
     if (!src) throw new Error(`${candidate.manifestPath} not found`);
@@ -132,7 +132,7 @@ async function resolveGo(
 ): Promise<CandidateResolution> {
   const dir = candidate.dir;
   const prefix = dir === "." ? "" : `${dir}/`;
-  const workdir = await mkdtemp(path.join(tmpdir(), "safebump-go-"));
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-go-"));
   try {
     const gomod = await gh.getFile(ref, `${prefix}go.mod`, base);
     if (!gomod) throw new Error(`go.mod not found in ${dir}`);
@@ -168,7 +168,7 @@ async function resolveRuby(
   }
   const dir = candidate.dir;
   const prefix = dir === "." ? "" : `${dir}/`;
-  const workdir = await mkdtemp(path.join(tmpdir(), "safebump-ruby-"));
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-ruby-"));
   try {
     const gemfile = await gh.getFile(ref, candidate.manifestPath, base);
     if (!gemfile) throw new Error(`Gemfile not found in ${dir}`);

@@ -79,6 +79,6 @@ describe("branchName", () => {
       name: "@scope/pkg",
       latestVersion: "2.0.0",
     } as UpdateCandidate;
-    expect(branchName(c)).toBe("safebump/npm/frontend-scope-pkg-2.0.0");
+    expect(branchName(c)).toBe("converge/npm/frontend-scope-pkg-2.0.0");
   });
 });

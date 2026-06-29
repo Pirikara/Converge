@@ -43,7 +43,7 @@ export function extractUvExplanation(stderr: string): string {
  * conflict explanation, with zero arbitrary code execution.
  */
 export async function uvCompile(dir: string, inputFile: string): Promise<UvResult> {
-  const outFile = path.join(dir, ".safebump.lock");
+  const outFile = path.join(dir, ".converge.lock");
   const args = [
     "pip",
     "compile",

@@ -24,7 +24,7 @@ function sanitize(s: string): string {
 /** Deterministic, idempotent branch name encoding the target version. */
 export function branchName(c: UpdateCandidate): string {
   const scope = c.dir === "." ? "" : `${sanitize(c.dir)}-`;
-  return `safebump/npm/${scope}${sanitize(c.name)}-${c.latestVersion}`;
+  return `converge/npm/${scope}${sanitize(c.name)}-${c.latestVersion}`;
 }
 
 /**

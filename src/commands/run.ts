@@ -86,7 +86,7 @@ function parseTypes(input: string | undefined): UpdateType[] {
 }
 
 async function loadRepoConfig(gh: GitHubClient, ref: RepoRef, base: string): Promise<Config> {
-  const file = await gh.getFile(ref, "safebump.json", base);
+  const file = await gh.getFile(ref, "converge.json", base);
   if (!file) return ConfigSchema.parse({});
   return ConfigSchema.parse(JSON.parse(stripJsonComments(file.content)));
 }

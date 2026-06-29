@@ -2,7 +2,7 @@ import semver from "semver";
 import type { PackageMeta } from "../types.js";
 import { log } from "../../logger.js";
 
-const DEFAULT_REGISTRY = process.env.SAFEBUMP_NPM_REGISTRY ?? "https://registry.npmjs.org";
+const DEFAULT_REGISTRY = process.env.CONVERGE_NPM_REGISTRY ?? "https://registry.npmjs.org";
 
 interface RegistryVersion {
   deprecated?: string;

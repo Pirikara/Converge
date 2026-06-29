@@ -58,7 +58,7 @@ export async function evaluateSafety(
         {
           kind: "allowlisted",
           severity: "info",
-          detail: `${input.name}@${input.version} is allowlisted in safebump.json`,
+          detail: `${input.name}@${input.version} is allowlisted in converge.json`,
         },
       ],
     };

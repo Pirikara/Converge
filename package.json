@@ -1,10 +1,10 @@
 {
-  "name": "safebump",
+  "name": "converge",
   "version": "0.0.0",
   "description": "Safe, hands-off dependency updates. Resolves what Dependabot can't, and blocks what you shouldn't install.",
   "type": "module",
   "bin": {
-    "safebump": "dist/cli.js"
+    "converge": "dist/cli.js"
   },
   "files": [
     "dist"

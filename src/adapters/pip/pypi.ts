@@ -1,7 +1,7 @@
 import type { PackageMeta } from "../types.js";
 import { log } from "../../logger.js";
 
-const PYPI_API = process.env.SAFEBUMP_PYPI_API ?? "https://pypi.org";
+const PYPI_API = process.env.CONVERGE_PYPI_API ?? "https://pypi.org";
 
 interface PyPiFile {
   upload_time_iso_8601?: string;

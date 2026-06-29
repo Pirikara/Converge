@@ -16,7 +16,7 @@ describe("resolveUpdate", () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(path.join(tmpdir(), "safebump-ladder-"));
+    dir = await mkdtemp(path.join(tmpdir(), "converge-ladder-"));
     await writeFile(
       path.join(dir, "package.json"),
       JSON.stringify(

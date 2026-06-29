@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * safebump.json schema. Mirrors SPEC §9.
+ * converge.json schema. Mirrors SPEC §9.
  * Repository-side config; all fields optional with sane defaults.
  */
 export const ConfigSchema = z

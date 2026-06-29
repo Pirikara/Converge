@@ -1,7 +1,7 @@
 import type { Severity } from "./types.js";
 import { log } from "../logger.js";
 
-const OSV_API = process.env.SAFEBUMP_OSV_API ?? "https://api.osv.dev";
+const OSV_API = process.env.CONVERGE_OSV_API ?? "https://api.osv.dev";
 
 export interface OsvRawVuln {
   id: string;
@@ -78,7 +78,7 @@ const cache = new Map<string, Promise<OsvVuln[]>>();
 /**
  * Query OSV.dev for advisories affecting a specific package version.
  * Covers both known vulnerabilities and known-malware advisories —
- * SafeBump's deterministic F2.1 layer.
+ * Converge's deterministic F2.1 layer.
  */
 export function queryOsv(
   ecosystem: string,

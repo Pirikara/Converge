@@ -12,7 +12,7 @@ const { version } = require("../package.json") as { version: string };
 const program = new Command();
 
 program
-  .name("safebump")
+  .name("converge")
   .description(
     "Safe, hands-off dependency updates. Resolves what Dependabot can't, blocks what you shouldn't install.",
   )
@@ -35,7 +35,7 @@ program
   .description("Plan and (with --apply) open update PRs for a GitHub repository")
   .argument("<repo>", "target repository as owner/repo or GitHub URL")
   .option("--apply", "actually create branches and PRs (default: dry-run)", false)
-  .option("--token <token>", "GitHub token (else SAFEBUMP_TOKEN / GITHUB_TOKEN)")
+  .option("--token <token>", "GitHub token (else CONVERGE_TOKEN / GITHUB_TOKEN)")
   .option("--types <list>", "comma-separated bump types to allow", "minor,patch")
   .option("--limit <n>", "max PRs to plan in one run", "5")
   .action(async (repo: string, opts: Record<string, string | boolean>) => {

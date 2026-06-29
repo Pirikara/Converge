@@ -19,7 +19,7 @@ const COPY_FILES = [
  * resolve a lockfile. We never copy node_modules and never run package code.
  */
 export async function prepareWorkdir(srcDir: string): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), "safebump-resolve-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "converge-resolve-"));
   for (const name of COPY_FILES) {
     const src = path.join(srcDir, name);
     try {

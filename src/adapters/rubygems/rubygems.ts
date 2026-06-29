@@ -1,7 +1,7 @@
 import type { PackageMeta } from "../types.js";
 import { log } from "../../logger.js";
 
-const API = process.env.SAFEBUMP_RUBYGEMS_API ?? "https://rubygems.org";
+const API = process.env.CONVERGE_RUBYGEMS_API ?? "https://rubygems.org";
 
 interface GemVersion {
   number: string;

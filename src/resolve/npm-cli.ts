@@ -18,7 +18,7 @@ export interface NpmRunResult {
  *   --package-lock-only : resolve + write lockfile, no node_modules
  *   --ignore-scripts    : never run lifecycle scripts (defense in depth)
  *
- * This is SafeBump's core resolution primitive: it surfaces ERESOLVE conflicts
+ * This is Converge's core resolution primitive: it surfaces ERESOLVE conflicts
  * exactly like a real install would, but with zero arbitrary code execution.
  */
 export async function resolveLockfile(dir: string): Promise<NpmRunResult> {

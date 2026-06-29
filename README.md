@@ -1,9 +1,9 @@
-# SafeBump
+# Converge
 
 > Hands-off dependency updates that **resolve what Dependabot can't**, **block what you shouldn't install**, and **explain the impact** — across npm, pip, Go, and RubyGems.
 
-SafeBump is a self-hosted, open-source CLI (in the spirit of Renovate) for keeping
-dependencies up to date. Unlike tools that stop at "here's a version bump", SafeBump:
+Converge is a self-hosted, open-source CLI (in the spirit of Renovate) for keeping
+dependencies up to date. Unlike tools that stop at "here's a version bump", Converge:
 
 1. **Resolves** the update — including the *other* packages that need to move with it —
    and commits a verified lockfile, or explains exactly why it can't.
@@ -13,14 +13,14 @@ dependencies up to date. Unlike tools that stop at "here's a version bump", Safe
    scores the triage risk.
 4. **Flags deprecation / abandonment** and suggests replacements.
 
-A core principle runs through all of it: **SafeBump never executes third-party package
+A core principle runs through all of it: **Converge never executes third-party package
 code.** Every resolver uses a metadata-only / lockfile-only mode.
 
 ---
 
 ## The four pains it targets
 
-| | Pain with existing tools | SafeBump |
+| | Pain with existing tools | Converge |
 |---|---|---|
 | **P1** | Can't resolve the graph → no PR, silent failure | F1 resolution + automatic co-bump; always resolve **or** report the exact conflict |
 | **P2** | A PR appears but the impact is unknown → triage stalls | F3 usage mapping (`file:line`) + Low/Med/High risk |
@@ -45,7 +45,7 @@ currently acts on exact pins (`==` / `gem "x", "1.2.3"`).
 
 ## Requirements
 
-- **Node.js ≥ 20** (to run SafeBump itself)
+- **Node.js ≥ 20** (to run Converge itself)
 - A **GitHub token** for `run` (PAT with `repo` scope, or a self-hosted GitHub App token)
 - The toolchain for each ecosystem you resolve (only what you use):
   - npm → bundled with Node; **pnpm / Yarn Berry** → `corepack` (bundled with Node); **bun** → `bun`
@@ -53,7 +53,7 @@ currently acts on exact pins (`==` / `gem "x", "1.2.3"`).
   - Go → `go`
   - RubyGems → `bundler` (Ruby)
 
-SafeBump runs these in metadata/lockfile-only modes, so packages are never built or executed.
+Converge runs these in metadata/lockfile-only modes, so packages are never built or executed.
 
 ---
 
@@ -62,7 +62,7 @@ SafeBump runs these in metadata/lockfile-only modes, so packages are never built
 Not yet published to a registry — build from source:
 
 ```bash
-git clone <your-fork-or-repo> safebump && cd safebump
+git clone <your-fork-or-repo> converge && cd converge
 pnpm install
 pnpm build
 node dist/cli.js --help
@@ -84,7 +84,7 @@ node dist/cli.js scan ./repo --json
 Dry-run by default; `--apply` opens PRs.
 
 ```bash
-export SAFEBUMP_TOKEN=ghp_xxx           # or GITHUB_TOKEN
+export CONVERGE_TOKEN=ghp_xxx           # or GITHUB_TOKEN
 
 # preview (no changes): scan → safety → resolve → impact for each candidate
 node dist/cli.js run owner/repo
@@ -111,7 +111,7 @@ node dist/cli.js resolve ./backend langchain 1.3.11
 
 ---
 
-## Configuration — `safebump.json`
+## Configuration — `converge.json`
 
 Optional, at the repo root. JSON with comments (JSON5) is allowed. All fields are
 optional with sensible defaults.
@@ -151,7 +151,7 @@ Evaluated **before** resolution, so dangerous versions are never installed:
 
 ## Status & limitations
 
-SafeBump is early. Known gaps:
+Converge is early. Known gaps:
 
 - pip / RubyGems outdated detection acts on **exact pins** only (range floors need
   installed-version modelling from the lockfile).

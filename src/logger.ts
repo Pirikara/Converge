@@ -19,7 +19,7 @@ export const log = {
     if (enabled("debug")) console.error(pc.dim(`[debug] ${msg}`));
   },
   info(msg: string): void {
-    if (enabled("info")) console.error(`${pc.cyan("safebump")} ${msg}`);
+    if (enabled("info")) console.error(`${pc.cyan("converge")} ${msg}`);
   },
   warn(msg: string): void {
     if (enabled("warn")) console.error(`${pc.yellow("warn")} ${msg}`);
