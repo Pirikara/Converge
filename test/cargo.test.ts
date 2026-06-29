@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseCargoToml } from "../src/adapters/cargo/cargo-toml.js";
+import { parseCargoToml, editCargoToml } from "../src/adapters/cargo/cargo-toml.js";
 import { parseCargoLock } from "../src/audit/parsers.js";
 import { CargoAdapter } from "../src/adapters/cargo/index.js";
+import { findRustUsage } from "../src/impact/usage.js";
 
 describe("parseCargoToml", () => {
   it("parses simple and table deps across sections; skips git/workspace", () => {
@@ -23,6 +24,29 @@ mockall = "0.12.0"
     expect(deps.find((d) => d.name === "mockall")).toMatchObject({ kind: "dev" });
     expect(deps.find((d) => d.name === "local")).toBeUndefined(); // path dep
     expect(deps.find((d) => d.name === "shared")).toBeUndefined(); // workspace dep
+  });
+});
+
+describe("editCargoToml", () => {
+  it("edits simple and table version forms", () => {
+    expect(editCargoToml(`[dependencies]\nserde = "1.0"\n`, "serde", "1.0", "1.2.0")).toContain('serde = "1.2.0"');
+    const table = `[dependencies]\ntokio = { version = "1.35", features = ["full"] }\n`;
+    expect(editCargoToml(table, "tokio", "1.35", "1.40")).toContain('version = "1.40"');
+  });
+  it("throws when the dep/version is absent", () => {
+    expect(() => editCargoToml(`[dependencies]\nserde = "1.0"\n`, "serde", "9.9", "1.2.0")).toThrow();
+  });
+});
+
+describe("findRustUsage", () => {
+  const files = [
+    { path: "src/main.rs", content: "use serde_json::Value;\nextern crate rand;\n" },
+    { path: "src/lib.rs", content: "use serde::Serialize;\n" },
+  ];
+  it("matches use/extern crate with hyphen->underscore", () => {
+    expect(findRustUsage("serde-json", files).files).toBe(1); // serde_json in main.rs
+    expect(findRustUsage("rand", files).files).toBe(1);
+    expect(findRustUsage("tokio", files).files).toBe(0);
   });
 });
 

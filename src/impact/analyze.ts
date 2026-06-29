@@ -1,6 +1,6 @@
 import type { UpdateCandidate } from "../adapters/types.js";
 import type { SafetyDecision } from "../safety/types.js";
-import { findUsage, findPythonUsage, findGoUsage, findRubyUsage, type SourceFile, type UsageReport } from "./usage.js";
+import { findUsage, findPythonUsage, findGoUsage, findRubyUsage, findRustUsage, type SourceFile, type UsageReport } from "./usage.js";
 import { scoreRisk, type RiskResult } from "./risk.js";
 
 export interface ImpactReport {
@@ -26,7 +26,9 @@ export function analyzeImpact(
         ? findGoUsage(candidate.name, sourceFiles)
         : candidate.ecosystem === "rubygems"
           ? findRubyUsage(candidate.name, sourceFiles)
-          : findUsage(candidate.name, sourceFiles);
+          : candidate.ecosystem === "cargo"
+            ? findRustUsage(candidate.name, sourceFiles)
+            : findUsage(candidate.name, sourceFiles);
   const risk = scoreRisk({
     updateType: candidate.updateType,
     usageFiles: usage.files,

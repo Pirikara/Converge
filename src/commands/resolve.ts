@@ -1,14 +1,16 @@
-import { readFile, writeFile, access, mkdtemp, copyFile } from "node:fs/promises";
+import { readFile, writeFile, access, mkdtemp, mkdir, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pc from "picocolors";
 import { bumpRange } from "../adapters/npm/range.js";
 import { parseRequirements } from "../adapters/pip/requirements.js";
 import { parseGemfile, editGemfilePin } from "../adapters/rubygems/gemfile.js";
+import { parseCargoToml, editCargoToml } from "../adapters/cargo/cargo-toml.js";
 import { getResolver } from "../resolve/npm-family.js";
 import { decidePackageManager } from "../resolve/pm-detect.js";
 import { resolvePipUpdate } from "../resolve/pip.js";
 import { resolveBundleLock } from "../resolve/ruby-cli.js";
+import { runCargoUpdate } from "../resolve/cargo-cli.js";
 import { prepareWorkdir, cleanupWorkdir } from "../resolve/workdir.js";
 import { log } from "../logger.js";
 
@@ -189,6 +191,45 @@ async function runResolveRuby(
   }
 }
 
+async function runResolveCargo(
+  repoDir: string,
+  pkg: string,
+  toVersion: string,
+  opts: ResolveOptions,
+): Promise<number> {
+  const content = await readFile(path.join(repoDir, "Cargo.toml"), "utf8");
+  const dep = parseCargoToml(content).find((d) => d.name === pkg);
+  if (!dep) {
+    log.error(`${pkg} is not a dependency in Cargo.toml`);
+    return 1;
+  }
+  log.info(`resolving ${pc.bold(pkg)} ${dep.range} → ${toVersion} ${pc.dim("(cargo, no code executed)")}`);
+
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-cargo-"));
+  try {
+    await writeFile(path.join(workdir, "Cargo.toml"), editCargoToml(content, pkg, dep.range, toVersion));
+    await mkdir(path.join(workdir, "src"), { recursive: true });
+    await writeFile(path.join(workdir, "src", "lib.rs"), "");
+    const hadLock = await exists(path.join(repoDir, "Cargo.lock"));
+    if (hadLock) await copyFile(path.join(repoDir, "Cargo.lock"), path.join(workdir, "Cargo.lock"));
+
+    const r = await runCargoUpdate(workdir, pkg, toVersion);
+    if (!r.ok) {
+      process.stdout.write(`\n${pc.red("✗ unresolvable")}\n${pc.dim(r.stderr)}\n`);
+      return 2;
+    }
+    process.stdout.write(`\n${pc.green("✓ resolved")} (${pc.green("direct")})\n  • ${pkg}: ${dep.range} → ${toVersion}\n`);
+    if (opts.write) {
+      await writeFile(path.join(repoDir, "Cargo.toml"), await readFile(path.join(workdir, "Cargo.toml"), "utf8"));
+      if (hadLock) await writeFile(path.join(repoDir, "Cargo.lock"), await readFile(path.join(workdir, "Cargo.lock"), "utf8"));
+      process.stdout.write(`\n${pc.cyan("wrote")} Cargo.toml${hadLock ? ", Cargo.lock" : ""}\n`);
+    }
+    return 0;
+  } finally {
+    await cleanupWorkdir(workdir);
+  }
+}
+
 export async function runResolve(
   dir: string,
   pkg: string,
@@ -205,6 +246,9 @@ export async function runResolve(
   if (await exists(path.join(repoDir, "Gemfile"))) {
     return runResolveRuby(repoDir, pkg, toVersion, opts);
   }
-  log.error(`no package.json, requirements.txt, or Gemfile found in ${repoDir}`);
+  if (await exists(path.join(repoDir, "Cargo.toml"))) {
+    return runResolveCargo(repoDir, pkg, toVersion, opts);
+  }
+  log.error(`no package.json, requirements.txt, Gemfile, or Cargo.toml found in ${repoDir}`);
   return 1;
 }

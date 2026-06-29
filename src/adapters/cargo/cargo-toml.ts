@@ -1,5 +1,25 @@
 import type { DependencyEntry } from "../types.js";
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Replace a dependency's version in Cargo.toml (simple or table form). */
+export function editCargoToml(
+  content: string,
+  name: string,
+  fromRange: string,
+  toVersion: string,
+): string {
+  const n = escapeRe(name);
+  const v = escapeRe(fromRange);
+  const simple = new RegExp(`^(\\s*${n}\\s*=\\s*")${v}(")`, "m");
+  if (simple.test(content)) return content.replace(simple, `$1${toVersion}$2`);
+  const table = new RegExp(`^(\\s*${n}\\s*=\\s*\\{[^}]*?version\\s*=\\s*")${v}(")`, "m");
+  if (table.test(content)) return content.replace(table, `$1${toVersion}$2`);
+  throw new Error(`could not locate ${name} = "${fromRange}" in Cargo.toml`);
+}
+
 /**
  * Parse `[dependencies]` / `[dev-dependencies]` / `[build-dependencies]` (and
  * target-specific ones) from a Cargo.toml. Best-effort, no TOML library.

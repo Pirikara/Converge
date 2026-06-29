@@ -3,6 +3,7 @@ import { NpmAdapter } from "../adapters/npm/index.js";
 import { PipAdapter } from "../adapters/pip/index.js";
 import { GoAdapter } from "../adapters/gomod/index.js";
 import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
+import { CargoAdapter } from "../adapters/cargo/index.js";
 import type { EcosystemAdapter, UpdateCandidate } from "../adapters/types.js";
 import type { Config } from "../config/schema.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
@@ -52,6 +53,9 @@ export async function selectCandidates(
   }
   if (config.ecosystems.rubygems.enabled) {
     ecosystems.push({ adapter: new RubyGemsAdapter(), dirs: config.ecosystems.rubygems.directories });
+  }
+  if (config.ecosystems.cargo.enabled) {
+    ecosystems.push({ adapter: new CargoAdapter(), dirs: config.ecosystems.cargo.directories });
   }
 
   const selected: UpdateCandidate[] = [];

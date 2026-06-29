@@ -58,6 +58,32 @@ export function findRubyUsage(gem: string, files: SourceFile[]): UsageReport {
   return { pkg: gem, files: filesWith.size, sites };
 }
 
+export function isRustSourceFile(path: string): boolean {
+  return /\.rs$/.test(path);
+}
+
+/**
+ * Find where a crate is used across .rs files (F3.3 for Cargo). Crate names
+ * with hyphens are referenced with underscores in code, so match the
+ * underscore form in `use` / `extern crate`.
+ */
+export function findRustUsage(crate: string, files: SourceFile[]): UsageReport {
+  const root = escapeRe(crate.replace(/-/g, "_"));
+  const re = new RegExp(`(?:use|extern\\s+crate)\\s+(${root})(?:::|;|\\s)`, "g");
+  const sites: ImportSite[] = [];
+  const filesWith = new Set<string>();
+  for (const f of files) {
+    let m: RegExpExecArray | null;
+    re.lastIndex = 0;
+    while ((m = re.exec(f.content))) {
+      sites.push({ file: f.path, line: lineOf(f.content, m.index), symbols: [], kind: "import" });
+      filesWith.add(f.path);
+    }
+  }
+  sites.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+  return { pkg: crate, files: filesWith.size, sites };
+}
+
 /**
  * Find where a Go module is imported across .go files (F3.3 for Go). Go imports
  * use the full module path (or a subpackage) in quotes, e.g. `import "M/sub"`.

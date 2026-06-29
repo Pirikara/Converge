@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { bumpRange } from "../adapters/npm/range.js";
@@ -8,6 +8,8 @@ import { resolvePipUpdate } from "../resolve/pip.js";
 import { resolveGoModule } from "../resolve/go-cli.js";
 import { resolveBundleLock } from "../resolve/ruby-cli.js";
 import { editGemfilePin } from "../adapters/rubygems/gemfile.js";
+import { runCargoUpdate } from "../resolve/cargo-cli.js";
+import { editCargoToml } from "../adapters/cargo/cargo-toml.js";
 import { getResolver } from "../resolve/npm-family.js";
 import type { NpmPackageManager } from "../resolve/pm-detect.js";
 import { cleanupWorkdir } from "../resolve/workdir.js";
@@ -196,11 +198,54 @@ async function resolveRuby(
   }
 }
 
+async function resolveCargoCrate(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  candidate: UpdateCandidate,
+): Promise<CandidateResolution> {
+  const dir = candidate.dir;
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-cargo-"));
+  try {
+    const toml = await gh.getFile(ref, `${prefix}Cargo.toml`, base);
+    if (!toml) throw new Error(`Cargo.toml not found in ${dir}`);
+    const edited = editCargoToml(toml.content, candidate.name, candidate.currentRange, candidate.latestVersion);
+    await writeFile(path.join(workdir, "Cargo.toml"), edited);
+    // A src stub so cargo accepts the manifest without the real sources.
+    await mkdir(path.join(workdir, "src"), { recursive: true });
+    await writeFile(path.join(workdir, "src", "lib.rs"), "");
+
+    const baseLock = await gh.getFile(ref, `${prefix}Cargo.lock`, base);
+    if (baseLock) await writeFile(path.join(workdir, "Cargo.lock"), baseLock.content);
+
+    const r = await runCargoUpdate(workdir, candidate.name, candidate.latestVersion);
+    if (!r.ok) {
+      return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: r.stderr.split("\n").slice(-4).join("\n") };
+    }
+    const repoFiles = [{ path: `${prefix}Cargo.toml`, content: await readFile(path.join(workdir, "Cargo.toml"), "utf8") }];
+    // Only commit Cargo.lock if the project already tracks one.
+    if (baseLock) {
+      repoFiles.push({ path: `${prefix}Cargo.lock`, content: await readFile(path.join(workdir, "Cargo.lock"), "utf8") });
+    }
+    return {
+      candidate,
+      status: "resolved",
+      changes: [{ name: candidate.name, fromRange: candidate.currentRange, toRange: candidate.latestVersion, cobump: false }],
+      repoFiles,
+      cobumps: 0,
+      warnings: [],
+    };
+  } finally {
+    await cleanupWorkdir(workdir);
+  }
+}
+
 /**
  * Resolve a candidate against the live registry, dispatching by ecosystem.
  * npm: package-lock-only ladder (+ co-bump); pip: uv compile (--no-build);
- * gomod: go get (module mode); rubygems: bundle lock. No third-party package
- * code is executed in any path.
+ * gomod: go get; rubygems: bundle lock; cargo: cargo update --precise. No
+ * third-party package code is executed in any path.
  */
 export async function resolveCandidate(
   gh: GitHubClient,
@@ -213,5 +258,6 @@ export async function resolveCandidate(
   if (candidate.ecosystem === "pip") return resolvePip(gh, ref, base, candidate);
   if (candidate.ecosystem === "gomod") return resolveGo(gh, ref, base, candidate);
   if (candidate.ecosystem === "rubygems") return resolveRuby(gh, ref, base, candidate);
+  if (candidate.ecosystem === "cargo") return resolveCargoCrate(gh, ref, base, candidate);
   return resolveNpmFamily(gh, ref, base, candidate, pm);
 }
