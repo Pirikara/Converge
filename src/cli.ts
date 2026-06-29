@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { runScan } from "./commands/scan.js";
 import { runRun } from "./commands/run.js";
 import { runResolve } from "./commands/resolve.js";
+import { runAudit } from "./commands/audit.js";
 import { setLogLevel } from "./logger.js";
 import { createRequire } from "node:module";
 
@@ -59,6 +60,17 @@ program
   .action(async (dir: string, pkg: string, version: string, opts: { write: boolean }) => {
     if (program.opts().verbose) setLogLevel("debug");
     const code = await runResolve(dir, pkg, version, { write: opts.write });
+    process.exitCode = code;
+  });
+
+program
+  .command("audit")
+  .description("Scan the whole lockfile tree (incl. transitive deps) for malware & vulnerabilities")
+  .argument("[dir]", "path to the repository root", ".")
+  .option("--json", "output machine-readable JSON", false)
+  .action(async (dir: string, opts: { json: boolean }) => {
+    if (program.opts().verbose) setLogLevel("debug");
+    const code = await runAudit(dir, { json: opts.json });
     process.exitCode = code;
   });
 

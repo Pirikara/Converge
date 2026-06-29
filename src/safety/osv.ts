@@ -73,6 +73,33 @@ export function toOsvVuln(v: OsvRawVuln): OsvVuln {
   };
 }
 
+/**
+ * Batch-query OSV for many package versions at once (`/v1/querybatch`). Returns,
+ * per input (same order), the advisory ids affecting it (empty when clean).
+ * Used to audit a whole lockfile tree cheaply before fetching full details.
+ */
+export async function queryOsvBatch(
+  ecosystem: string,
+  items: { name: string; version: string }[],
+): Promise<string[][]> {
+  const results: string[][] = [];
+  const CHUNK = 1000;
+  for (let i = 0; i < items.length; i += CHUNK) {
+    const chunk = items.slice(i, i + CHUNK);
+    const res = await fetch(`${OSV_API}/v1/querybatch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        queries: chunk.map((it) => ({ package: { name: it.name, ecosystem }, version: it.version })),
+      }),
+    });
+    if (!res.ok) throw new Error(`OSV batch ${res.status}`);
+    const data = (await res.json()) as { results?: { vulns?: { id: string }[] }[] };
+    for (const r of data.results ?? []) results.push((r.vulns ?? []).map((v) => v.id));
+  }
+  return results;
+}
+
 const cache = new Map<string, Promise<OsvVuln[]>>();
 
 /**
