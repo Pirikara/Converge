@@ -184,6 +184,28 @@ export function renderActionsPrBody(c: UpdateCandidate, safety: SafetyVerdict): 
   ].join("\n");
 }
 
+/** PR body for a Terraform provider/module constraint bump (scan-only). */
+export function renderTerraformPrBody(c: UpdateCandidate): string {
+  const isModule = c.name.split("/").length === 3;
+  const kind = isModule ? "module" : "provider";
+  const regUrl = `https://registry.terraform.io/${isModule ? "modules" : "providers"}/${c.name}`;
+  return [
+    `## Converge: ${c.name} \`${c.currentRange}\` → \`${c.latestVersion}\``,
+    "",
+    "### 🏗️ Terraform",
+    `- updates the \`${c.name}\` ${kind} constraint in \`${c.manifestPath}\` (${c.updateType})`,
+    c.currentVersion ? `- highest version satisfying the old constraint: \`${c.currentVersion}\`` : "",
+    "",
+    "### Links",
+    `- [Terraform Registry](${regUrl})`,
+    "",
+    "---",
+    `🤖 Generated with [Converge](${CONVERGE_URL})`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 /** Minimal PR body for Docker base-image bumps (no lockfile/safety/impact). */
 export function renderDockerPrBody(c: UpdateCandidate): string {
   return [

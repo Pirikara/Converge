@@ -11,7 +11,8 @@ export type EcosystemId =
   | "cargo"
   | "rubygems"
   | "docker"
-  | "github-actions";
+  | "github-actions"
+  | "terraform";
 
 export type DependencyKind =
   | "prod"

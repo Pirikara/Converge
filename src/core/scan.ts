@@ -7,6 +7,7 @@ import { CargoAdapter } from "../adapters/cargo/index.js";
 import { PyProjectAdapter } from "../adapters/pyproject/index.js";
 import { DockerAdapter } from "../adapters/docker/index.js";
 import { GitHubActionsAdapter } from "../adapters/github-actions/index.js";
+import { TerraformAdapter } from "../adapters/terraform/index.js";
 import type { EcosystemAdapter, Manifest, UpdateCandidate } from "../adapters/types.js";
 import { resolveManifestPaths, findManifestsMatching } from "./discover.js";
 import { loadConfig } from "../config/load.js";
@@ -52,6 +53,9 @@ export async function scan(repoRootInput: string): Promise<ScanResult> {
       adapter: new GitHubActionsAdapter(),
       dirs: config.ecosystems["github-actions"].directories,
     });
+  }
+  if (config.ecosystems.terraform.enabled) {
+    enabled.push({ adapter: new TerraformAdapter(), dirs: config.ecosystems.terraform.directories });
   }
 
   const manifests: Manifest[] = [];
