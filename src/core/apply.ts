@@ -17,6 +17,7 @@ import { runCargoUpdate } from "../resolve/cargo-cli.js";
 import { editCargoToml } from "../adapters/cargo/cargo-toml.js";
 import { editDockerfileTag } from "../adapters/docker/dockerfile.js";
 import { editComposeImageTag } from "../adapters/docker/compose.js";
+import { editActionRef } from "../adapters/github-actions/workflow.js";
 import { getResolver } from "../resolve/npm-family.js";
 import type { NpmPackageManager } from "../resolve/pm-detect.js";
 import { cleanupWorkdir } from "../resolve/workdir.js";
@@ -315,6 +316,30 @@ async function resolveDockerImage(
   }
 }
 
+async function resolveActions(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  candidate: UpdateCandidate,
+): Promise<CandidateResolution> {
+  // No lockfile / resolution step — just rewrite the `uses:` ref.
+  const file = await gh.getFile(ref, candidate.manifestPath, base);
+  if (!file) throw new Error(`${candidate.manifestPath} not found`);
+  try {
+    const edited = editActionRef(file.content, candidate.name, candidate.currentRange, candidate.latestVersion);
+    return {
+      candidate,
+      status: "resolved",
+      changes: [{ name: candidate.name, fromRange: candidate.currentRange, toRange: candidate.latestVersion, cobump: false }],
+      repoFiles: [{ path: candidate.manifestPath, content: edited }],
+      cobumps: 0,
+      warnings: [],
+    };
+  } catch (err) {
+    return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: (err as Error).message };
+  }
+}
+
 /**
  * Resolve a candidate against the live registry, dispatching by ecosystem.
  * npm: package-lock-only ladder (+ co-bump); pip: uv compile (requirements) or
@@ -460,5 +485,6 @@ export async function resolveCandidate(
   if (candidate.ecosystem === "rubygems") return resolveRuby(gh, ref, base, candidate);
   if (candidate.ecosystem === "cargo") return resolveCargoCrate(gh, ref, base, candidate);
   if (candidate.ecosystem === "docker") return resolveDockerImage(gh, ref, base, candidate);
+  if (candidate.ecosystem === "github-actions") return resolveActions(gh, ref, base, candidate);
   return resolveNpmFamily(gh, ref, base, candidate, pm);
 }

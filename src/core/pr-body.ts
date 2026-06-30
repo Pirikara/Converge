@@ -160,6 +160,26 @@ export function renderGroupPrBody(
   return lines.join("\n");
 }
 
+/** PR body for a GitHub Actions `uses:` bump (OSV safety, no lockfile/impact). */
+export function renderActionsPrBody(c: UpdateCandidate, safety: SafetyVerdict): string {
+  return [
+    `## Converge: ${c.name} ${c.currentRange} → ${c.latestVersion}`,
+    "",
+    "### ⚙️ GitHub Actions",
+    `- updates the \`${c.name}\` action ref in \`${c.manifestPath}\` (${c.updateType})`,
+    `- \`uses: ${c.name}@${c.currentRange}\` → \`uses: ${c.name}@${c.latestVersion}\``,
+    "",
+    ...renderSafety(safety),
+    "",
+    "### Links",
+    `- [${c.name}](https://github.com/${c.name})` +
+      ` · [release notes](https://github.com/${c.name}/releases/tag/${c.latestVersion})`,
+    "",
+    "---",
+    `🤖 Generated with [Converge](${CONVERGE_URL})`,
+  ].join("\n");
+}
+
 /** Minimal PR body for Docker base-image bumps (no lockfile/safety/impact). */
 export function renderDockerPrBody(c: UpdateCandidate): string {
   return [

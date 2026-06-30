@@ -79,6 +79,19 @@ export class GitHubClient {
     branch: string,
     filename: string,
   ): Promise<string[]> {
+    return this.findManifestPathsMatching(ref, branch, (p) => p.split("/").pop() === filename);
+  }
+
+  /**
+   * List repo paths at `branch` whose path matches `predicate`. Generalizes
+   * basename matching for manifests identified by location (e.g. Actions
+   * workflows under `.github/workflows/`).
+   */
+  async findManifestPathsMatching(
+    ref: RepoRef,
+    branch: string,
+    predicate: (path: string) => boolean,
+  ): Promise<string[]> {
     const { data } = await this.octokit.git.getTree({
       ...ref,
       tree_sha: branch,
@@ -89,8 +102,8 @@ export class GitHubClient {
         (e) =>
           e.type === "blob" &&
           typeof e.path === "string" &&
-          e.path.split("/").pop() === filename &&
-          !e.path.split("/").includes("node_modules"),
+          !e.path.split("/").includes("node_modules") &&
+          predicate(e.path),
       )
       .map((e) => e.path as string)
       .sort();

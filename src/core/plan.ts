@@ -6,6 +6,7 @@ import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
 import { CargoAdapter } from "../adapters/cargo/index.js";
 import { PyProjectAdapter } from "../adapters/pyproject/index.js";
 import { DockerAdapter } from "../adapters/docker/index.js";
+import { GitHubActionsAdapter } from "../adapters/github-actions/index.js";
 import type { EcosystemAdapter, UpdateCandidate } from "../adapters/types.js";
 import type { Config } from "../config/schema.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
@@ -63,18 +64,26 @@ export async function selectCandidates(
   if (config.ecosystems.docker.enabled) {
     ecosystems.push({ adapter: new DockerAdapter(), dirs: config.ecosystems.docker.directories });
   }
+  if (config.ecosystems["github-actions"].enabled) {
+    ecosystems.push({
+      adapter: new GitHubActionsAdapter(),
+      dirs: config.ecosystems["github-actions"].directories,
+    });
+  }
 
   const selected: UpdateCandidate[] = [];
   for (const { adapter, dirs } of ecosystems) {
-    const manifestPaths = (
-      await Promise.all(
-        adapter.manifestFilenames.map((filename) =>
-          dirs.length > 0
-            ? Promise.resolve(dirs.map((d) => path.posix.join(d, filename)))
-            : gh.findManifestPaths(ref, base, filename),
-        ),
-      )
-    ).flat();
+    const manifestPaths = adapter.manifestMatch
+      ? await gh.findManifestPathsMatching(ref, base, adapter.manifestMatch.bind(adapter))
+      : (
+          await Promise.all(
+            adapter.manifestFilenames.map((filename) =>
+              dirs.length > 0
+                ? Promise.resolve(dirs.map((d) => path.posix.join(d, filename)))
+                : gh.findManifestPaths(ref, base, filename),
+            ),
+          )
+        ).flat();
     log.debug(`${adapter.id}: scanning ${manifestPaths.length} manifest(s) on ${base}`);
 
     for (const mPath of manifestPaths) {

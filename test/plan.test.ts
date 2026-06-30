@@ -30,6 +30,7 @@ function fakeGh(): GitHubClient {
   return {
     getDefaultBranch: vi.fn(async () => "main"),
     findManifestPaths: vi.fn(async () => ["frontend/package.json"]),
+    findManifestPathsMatching: vi.fn(async () => []),
     getFile: vi.fn(async () => ({ content: pkgJson, sha: "abc" })),
   } as unknown as GitHubClient;
 }

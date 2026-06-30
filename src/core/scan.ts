@@ -6,8 +6,9 @@ import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
 import { CargoAdapter } from "../adapters/cargo/index.js";
 import { PyProjectAdapter } from "../adapters/pyproject/index.js";
 import { DockerAdapter } from "../adapters/docker/index.js";
+import { GitHubActionsAdapter } from "../adapters/github-actions/index.js";
 import type { EcosystemAdapter, Manifest, UpdateCandidate } from "../adapters/types.js";
-import { resolveManifestPaths } from "./discover.js";
+import { resolveManifestPaths, findManifestsMatching } from "./discover.js";
 import { loadConfig } from "../config/load.js";
 import { log } from "../logger.js";
 
@@ -46,16 +47,24 @@ export async function scan(repoRootInput: string): Promise<ScanResult> {
   if (config.ecosystems.docker.enabled) {
     enabled.push({ adapter: new DockerAdapter(), dirs: config.ecosystems.docker.directories });
   }
+  if (config.ecosystems["github-actions"].enabled) {
+    enabled.push({
+      adapter: new GitHubActionsAdapter(),
+      dirs: config.ecosystems["github-actions"].directories,
+    });
+  }
 
   const manifests: Manifest[] = [];
   const candidates: UpdateCandidate[] = [];
 
   for (const { adapter, dirs } of enabled) {
-    const paths = (
-      await Promise.all(
-        adapter.manifestFilenames.map((f) => resolveManifestPaths(repoRoot, f, dirs)),
-      )
-    ).flat();
+    const paths = adapter.manifestMatch
+      ? await findManifestsMatching(repoRoot, adapter.manifestMatch.bind(adapter))
+      : (
+          await Promise.all(
+            adapter.manifestFilenames.map((f) => resolveManifestPaths(repoRoot, f, dirs)),
+          )
+        ).flat();
     log.debug(`${adapter.id}: ${paths.length} manifest(s) to scan`);
 
     for (const p of paths) {

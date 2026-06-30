@@ -4,7 +4,14 @@
  * Resolution / install / test arrive in M1.
  */
 
-export type EcosystemId = "npm" | "pip" | "gomod" | "cargo" | "rubygems" | "docker";
+export type EcosystemId =
+  | "npm"
+  | "pip"
+  | "gomod"
+  | "cargo"
+  | "rubygems"
+  | "docker"
+  | "github-actions";
 
 export type DependencyKind =
   | "prod"
@@ -65,6 +72,13 @@ export interface EcosystemAdapter {
   id: EcosystemId;
   /** Glob/filename markers that identify this ecosystem's manifests. */
   manifestFilenames: string[];
+  /**
+   * Optional path matcher for manifests that aren't identified by basename
+   * alone (e.g. GitHub Actions workflows under `.github/workflows/*.yml`).
+   * When present, discovery filters the repo tree by this predicate instead
+   * of matching `manifestFilenames`.
+   */
+  manifestMatch?(repoRelPath: string): boolean;
 
   parseManifest(absPath: string, repoRoot: string): Promise<Manifest>;
   /** Parse a manifest from its raw text (for remote/in-memory files). */

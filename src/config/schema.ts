@@ -46,6 +46,12 @@ export const ConfigSchema = z
             directories: z.array(z.string()).default([]),
           })
           .default({}),
+        "github-actions": z
+          .object({
+            enabled: z.boolean().default(true),
+            directories: z.array(z.string()).default([]),
+          })
+          .default({}),
       })
       .default({}),
     schedule: z.string().default("weekly"),

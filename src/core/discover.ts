@@ -46,6 +46,43 @@ export async function findManifests(
 }
 
 /**
+ * Recursively find files whose repo-relative path matches `predicate`, skipping
+ * vendored/build dirs. Used for manifests not identified by basename (e.g.
+ * GitHub Actions workflows under `.github/workflows/`). Returns absolute paths.
+ */
+export async function findManifestsMatching(
+  root: string,
+  predicate: (repoRelPath: string) => boolean,
+  maxDepth = 6,
+): Promise<string[]> {
+  const found: string[] = [];
+
+  async function walk(dir: string, depth: number): Promise<void> {
+    if (depth > maxDepth) return;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        // Keep `.github` (workflows live there) but skip other dotdirs + vendors.
+        if (IGNORE_DIRS.has(entry.name)) continue;
+        if (entry.name.startsWith(".") && entry.name !== ".github") continue;
+        await walk(full, depth + 1);
+      } else if (entry.isFile() && predicate(path.relative(root, full))) {
+        found.push(full);
+      }
+    }
+  }
+
+  await walk(root, 0);
+  return found.sort();
+}
+
+/**
  * Resolve the set of manifest paths to scan: explicit config directories when
  * provided, otherwise auto-discovery.
  */
