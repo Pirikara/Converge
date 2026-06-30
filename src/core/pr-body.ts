@@ -241,6 +241,27 @@ export function renderHelmPrBody(c: UpdateCandidate): string {
     .join("\n");
 }
 
+/** PR body for a Maven/Gradle dependency bump (OSV safety, no build/impact). */
+export function renderMavenPrBody(c: UpdateCandidate, safety: SafetyVerdict): string {
+  const base = c.manifestPath.split("/").pop() ?? "";
+  const tool = base === "pom.xml" ? "Maven" : "Gradle";
+  return [
+    `## Converge: ${c.name} ${c.currentRange} → ${c.latestVersion}`,
+    "",
+    `### ☕ ${tool}`,
+    `- updates the \`${c.name}\` dependency in \`${c.manifestPath}\` (${c.updateType})`,
+    `- \`${c.currentRange}\` → \`${c.latestVersion}\``,
+    "",
+    ...renderSafety(safety),
+    "",
+    "### Links",
+    `- [Maven Central](https://central.sonatype.com/artifact/${c.name.replace(":", "/")})`,
+    "",
+    "---",
+    `🤖 Generated with [Converge](${CONVERGE_URL})`,
+  ].join("\n");
+}
+
 /** PR body for a Terraform provider/module constraint bump (scan-only). */
 export function renderTerraformPrBody(c: UpdateCandidate): string {
   const isModule = c.name.split("/").length === 3;

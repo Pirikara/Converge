@@ -15,7 +15,8 @@ export type EcosystemId =
   | "terraform"
   | "nuget"
   | "composer"
-  | "helm";
+  | "helm"
+  | "maven";
 
 export type DependencyKind =
   | "prod"
