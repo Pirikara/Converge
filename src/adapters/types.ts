@@ -24,6 +24,11 @@ export interface DependencyEntry {
   /** Declared version range as written in the manifest (e.g. "^1.2.0"). */
   range: string;
   kind: DependencyKind;
+  /**
+   * github-actions only: the commit SHA when a `uses:` ref is SHA-pinned
+   * (`@<sha> # v1.2.3`). `range` then holds the human version from the comment.
+   */
+  sha?: string;
 }
 
 export interface Manifest {
@@ -49,6 +54,13 @@ export interface UpdateCandidate {
   latestVersion: string;
   /** semver delta of currentVersion -> latestVersion. */
   updateType: "major" | "minor" | "patch" | "none" | "unknown";
+  /**
+   * github-actions only: when the `uses:` ref is SHA-pinned, the manifest edit
+   * swaps the commit SHA (and updates the trailing `# version` comment) instead
+   * of the version string. `currentRange`/`latestVersion` hold the comment
+   * versions for display.
+   */
+  pin?: { fromSha: string; toSha: string };
 }
 
 export interface PackageMeta {

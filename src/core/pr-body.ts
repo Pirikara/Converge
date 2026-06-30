@@ -162,12 +162,16 @@ export function renderGroupPrBody(
 
 /** PR body for a GitHub Actions `uses:` bump (OSV safety, no lockfile/impact). */
 export function renderActionsPrBody(c: UpdateCandidate, safety: SafetyVerdict): string {
+  const refLine = c.pin
+    ? `- \`${c.name}@${c.pin.fromSha.slice(0, 12)}… # ${c.currentRange}\` → ` +
+      `\`@${c.pin.toSha.slice(0, 12)}… # ${c.latestVersion}\` (SHA-pinned)`
+    : `- \`uses: ${c.name}@${c.currentRange}\` → \`uses: ${c.name}@${c.latestVersion}\``;
   return [
     `## Converge: ${c.name} ${c.currentRange} → ${c.latestVersion}`,
     "",
     "### ⚙️ GitHub Actions",
     `- updates the \`${c.name}\` action ref in \`${c.manifestPath}\` (${c.updateType})`,
-    `- \`uses: ${c.name}@${c.currentRange}\` → \`uses: ${c.name}@${c.latestVersion}\``,
+    refLine,
     "",
     ...renderSafety(safety),
     "",

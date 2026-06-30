@@ -7,7 +7,7 @@ import type {
   UpdateCandidate,
 } from "../types.js";
 import { parseWorkflow } from "./workflow.js";
-import { fetchActionTags } from "./tags.js";
+import { fetchActionTags, fetchActionTagRefs } from "./tags.js";
 import { pickNewerActionTag, actionUpdateType } from "./versioning.js";
 import { log } from "../../logger.js";
 
@@ -65,10 +65,11 @@ export class GitHubActionsAdapter implements EcosystemAdapter {
     const out: UpdateCandidate[] = [];
     const results = await Promise.allSettled(
       manifest.dependencies.map(async (dep) => {
-        const tags = await fetchActionTags(dep.name);
-        if (tags.length === 0) return null;
-        const newer = pickNewerActionTag(dep.range, tags);
+        const refs = await fetchActionTagRefs(dep.name);
+        if (refs.length === 0) return null;
+        const newer = pickNewerActionTag(dep.range, refs.map((r) => r.name));
         if (!newer) return null;
+
         const candidate: UpdateCandidate = {
           ecosystem: "github-actions",
           manifestPath: manifest.path,
@@ -80,6 +81,13 @@ export class GitHubActionsAdapter implements EcosystemAdapter {
           latestVersion: newer,
           updateType: actionUpdateType(dep.range, newer),
         };
+
+        if (dep.sha) {
+          // SHA-pinned: resolve the target tag to its commit SHA.
+          const toSha = refs.find((r) => r.name === newer)?.sha;
+          if (!toSha) return null; // target tag has no resolvable commit
+          candidate.pin = { fromSha: dep.sha, toSha };
+        }
         return candidate;
       }),
     );

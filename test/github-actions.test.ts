@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseWorkflow, editActionRef } from "../src/adapters/github-actions/workflow.js";
+import { parseWorkflow, editActionRef, editActionSha } from "../src/adapters/github-actions/workflow.js";
 import {
   pickNewerActionTag,
   actionUpdateType,
@@ -46,6 +46,49 @@ describe("parseWorkflow", () => {
   it("dedupes repeated action@ref", () => {
     const deps = parseWorkflow("a:\n  - uses: x/y@v1\nb:\n  - uses: x/y@v1\n");
     expect(deps).toHaveLength(1);
+  });
+});
+
+const SHA_A = "1234567890abcdef1234567890abcdef12345678";
+const SHA_B = "abcdef1234567890abcdef1234567890abcdef12";
+
+describe("parseWorkflow — SHA pins", () => {
+  it("captures a SHA pin with its comment version", () => {
+    const wf = `steps:\n  - uses: actions/checkout@${SHA_A} # v4.1.1\n`;
+    const deps = parseWorkflow(wf);
+    expect(deps).toHaveLength(1);
+    expect(deps[0]).toMatchObject({ name: "actions/checkout", range: "v4.1.1", sha: SHA_A });
+  });
+
+  it("tolerates extra comment text and pin@ prefixes", () => {
+    const wf = `steps:\n  - uses: actions/setup-node@${SHA_A} # pin@v3.8.1 (keep)\n`;
+    const deps = parseWorkflow(wf);
+    expect(deps[0]).toMatchObject({ range: "v3.8.1", sha: SHA_A });
+  });
+
+  it("skips a SHA pin with no version comment", () => {
+    const wf = `steps:\n  - uses: actions/checkout@${SHA_A}\n`;
+    expect(parseWorkflow(wf)).toHaveLength(0);
+  });
+});
+
+describe("editActionSha", () => {
+  it("swaps the SHA and updates the comment version", () => {
+    const wf = `steps:\n  - uses: actions/checkout@${SHA_A} # v4.1.1\n`;
+    const out = editActionSha(wf, "actions/checkout", SHA_A, SHA_B, "v4.1.1", "v4.2.0");
+    expect(out).toContain(`actions/checkout@${SHA_B} # v4.2.0`);
+    expect(out).not.toContain(SHA_A);
+  });
+
+  it("preserves subpath and trailing comment text", () => {
+    const wf = `steps:\n  - uses: monorepo/tools/sub@${SHA_A} # v2.0.0 keep-me\n`;
+    const out = editActionSha(wf, "monorepo/tools", SHA_A, SHA_B, "v2.0.0", "v3.0.0");
+    expect(out).toContain(`monorepo/tools/sub@${SHA_B} # v3.0.0 keep-me`);
+  });
+
+  it("throws when the SHA is absent", () => {
+    const wf = `steps:\n  - uses: actions/checkout@${SHA_B} # v4.1.1\n`;
+    expect(() => editActionSha(wf, "actions/checkout", SHA_A, SHA_B, "v4.1.1", "v4.2.0")).toThrow();
   });
 });
 

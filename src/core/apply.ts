@@ -17,7 +17,7 @@ import { runCargoUpdate } from "../resolve/cargo-cli.js";
 import { editCargoToml } from "../adapters/cargo/cargo-toml.js";
 import { editDockerfileTag } from "../adapters/docker/dockerfile.js";
 import { editComposeImageTag } from "../adapters/docker/compose.js";
-import { editActionRef } from "../adapters/github-actions/workflow.js";
+import { editActionRef, editActionSha } from "../adapters/github-actions/workflow.js";
 import { getResolver } from "../resolve/npm-family.js";
 import type { NpmPackageManager } from "../resolve/pm-detect.js";
 import { cleanupWorkdir } from "../resolve/workdir.js";
@@ -322,11 +322,20 @@ async function resolveActions(
   base: string,
   candidate: UpdateCandidate,
 ): Promise<CandidateResolution> {
-  // No lockfile / resolution step — just rewrite the `uses:` ref.
+  // No lockfile / resolution step — just rewrite the `uses:` ref (or SHA pin).
   const file = await gh.getFile(ref, candidate.manifestPath, base);
   if (!file) throw new Error(`${candidate.manifestPath} not found`);
   try {
-    const edited = editActionRef(file.content, candidate.name, candidate.currentRange, candidate.latestVersion);
+    const edited = candidate.pin
+      ? editActionSha(
+          file.content,
+          candidate.name,
+          candidate.pin.fromSha,
+          candidate.pin.toSha,
+          candidate.currentRange,
+          candidate.latestVersion,
+        )
+      : editActionRef(file.content, candidate.name, candidate.currentRange, candidate.latestVersion);
     return {
       candidate,
       status: "resolved",
