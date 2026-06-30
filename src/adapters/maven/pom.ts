@@ -12,12 +12,18 @@ function tag(body: string, name: string): string | null {
   return m ? m[1]! : null;
 }
 
+/** Blank out `<!-- … -->` comments, preserving length (and newlines) so offsets hold. */
+function maskComments(content: string): string {
+  return content.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, " "));
+}
+
 /** Find `<dependency>` entries with a literal `<version>`, tracking value offsets. */
 function findPomDeps(content: string): PomDep[] {
   const out: PomDep[] = [];
+  const masked = maskComments(content);
   const block = /<dependency>([\s\S]*?)<\/dependency>/g;
   let m: RegExpExecArray | null;
-  while ((m = block.exec(content))) {
+  while ((m = block.exec(masked))) {
     const body = m[1]!;
     const bodyStart = m.index + "<dependency>".length;
     const group = tag(body, "groupId");

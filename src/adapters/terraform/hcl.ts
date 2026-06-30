@@ -61,9 +61,14 @@ function* iterBlocks(content: string, headerRe: RegExp): Generator<Block> {
   }
 }
 
-/** First `key = "value"` scalar in a block body. */
+/**
+ * First `key = "value"` scalar in a block body. Accepts the key at any token
+ * boundary (line start, after `{`, `,`, `;`, or whitespace) so inline blocks
+ * like `{ source = "…", version = "…" }` resolve every field, not just the
+ * first. The leading non-identifier guard prevents matching `app_version`, etc.
+ */
 function scalar(body: string, key: string): string | null {
-  const m = new RegExp(`(?:^|\\n)\\s*${key}\\s*=\\s*"([^"]+)"`).exec(body);
+  const m = new RegExp(`(?:^|[^A-Za-z0-9_])${key}\\s*=\\s*"([^"]+)"`).exec(body);
   return m ? m[1]! : null;
 }
 

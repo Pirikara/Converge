@@ -32,6 +32,16 @@ describe("parseChart", () => {
     expect(map["common"]).toBeUndefined(); // file://
     expect(map["nginx"]).toBeUndefined(); // oci://
   });
+
+  it("skips dependencies missing a version or repository", () => {
+    const chart = `dependencies:
+  - name: novers
+    repository: https://x.example.com
+  - name: norepo
+    version: 1.0.0
+`;
+    expect(parseChart(chart)).toEqual([]);
+  });
 });
 
 describe("editChartVersion", () => {

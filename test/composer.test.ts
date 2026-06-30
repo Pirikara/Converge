@@ -107,6 +107,15 @@ describe("parseComposerLock", () => {
   it("returns [] on malformed JSON", () => {
     expect(parseComposerLock("{not json")).toEqual([]);
   });
+
+  it("is wired into the audit lockfile dispatch as Packagist", async () => {
+    const { parseLockfile } = await import("../src/audit/lockfiles.js");
+    const lock = JSON.stringify({ packages: [{ name: "a/b", version: "1.0.0" }] });
+    expect(parseLockfile("composer.lock", lock)).toEqual({
+      ecosystem: "Packagist",
+      packages: [{ name: "a/b", version: "1.0.0" }],
+    });
+  });
 });
 
 describe("isComposerManifest", () => {

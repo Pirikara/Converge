@@ -4,8 +4,8 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// A quoted `group:artifact:version` coordinate (Groovy or Kotlin DSL).
-const COORD = /['"]([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)['"]/g;
+// A quoted `group:artifact:version[:classifier]` coordinate (Groovy or Kotlin DSL).
+const COORD = /['"]([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?::[A-Za-z0-9_.-]+)?['"]/g;
 
 /** Parse `"group:artifact:version"` dependency coordinates from a build.gradle(.kts). */
 export function parseGradle(content: string): DependencyEntry[] {
@@ -26,11 +26,12 @@ export function parseGradle(content: string): DependencyEntry[] {
   return out;
 }
 
-/** Replace `group:artifact:from` with `…:to` in a build.gradle(.kts). */
+/** Replace `group:artifact:from` with `…:to` (preserving any `:classifier`). */
 export function editGradleVersion(content: string, name: string, from: string, to: string): string {
-  const re = new RegExp(`(['"]${escapeRe(name)}:)${escapeRe(from)}(['"])`);
+  // Lookahead lets the version be followed by a closing quote OR `:classifier`.
+  const re = new RegExp(`(['"]${escapeRe(name)}:)${escapeRe(from)}(?=['":])`);
   if (!re.test(content)) {
     throw new Error(`could not locate ${name}:${from} in build.gradle`);
   }
-  return content.replace(re, `$1${to}$2`);
+  return content.replace(re, `$1${to}`);
 }

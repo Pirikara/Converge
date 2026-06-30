@@ -47,6 +47,11 @@ describe("parseWorkflow", () => {
     const deps = parseWorkflow("a:\n  - uses: x/y@v1\nb:\n  - uses: x/y@v1\n");
     expect(deps).toHaveLength(1);
   });
+
+  it("handles a reusable-workflow call (subpath stripped to owner/repo)", () => {
+    const wf = "jobs:\n  call:\n    uses: org/repo/.github/workflows/build.yml@v2\n";
+    expect(parseWorkflow(wf)).toEqual([{ name: "org/repo", range: "v2", kind: "prod" }]);
+  });
 });
 
 const SHA_A = "1234567890abcdef1234567890abcdef12345678";

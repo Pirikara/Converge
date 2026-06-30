@@ -40,6 +40,27 @@ describe("parsePom / editPomVersion", () => {
   it("throws when absent", () => {
     expect(() => editPomVersion(POM, "x:y", "1.0", "2.0")).toThrow();
   });
+
+  it("ignores commented-out dependencies (no false positives)", () => {
+    const pom = `<project><dependencies>
+      <!-- <dependency><groupId>evil</groupId><artifactId>x</artifactId><version>1.0</version></dependency> -->
+      <dependency><groupId>g</groupId><artifactId>a</artifactId><version>1.2.3</version></dependency>
+    </dependencies></project>`;
+    expect(parsePom(pom).map((d) => d.name)).toEqual(["g:a"]);
+    // edit offsets stay valid despite the (masked) comment, which is preserved.
+    const out = editPomVersion(pom, "g:a", "1.2.3", "2.0.0");
+    expect(out).toContain("<version>2.0.0</version>");
+    expect(out).toContain("<groupId>evil</groupId>"); // comment untouched
+  });
+
+  it("does not parse plugin versions as dependencies", () => {
+    const pom = `<project><build><plugins><plugin>
+      <groupId>org.apache.maven.plugins</groupId>
+      <artifactId>maven-surefire-plugin</artifactId>
+      <version>3.1.2</version>
+    </plugin></plugins></build></project>`;
+    expect(parsePom(pom)).toEqual([]);
+  });
 });
 
 const GRADLE = `dependencies {
@@ -61,6 +82,19 @@ describe("parseGradle / editGradleVersion", () => {
     const out = editGradleVersion(GRADLE, "com.google.guava:guava", "32.0.0-jre", "33.0.0-jre");
     expect(out).toContain("com.google.guava:guava:33.0.0-jre");
     expect(out).toContain("kotlin-stdlib:1.9.0"); // untouched
+  });
+
+  it("handles a coordinate with a classifier, preserving it on edit", () => {
+    const g = `dependencies { testImplementation "org.apache.kafka:kafka-clients:3.5.0:test" }`;
+    expect(parseGradle(g)).toEqual([{ name: "org.apache.kafka:kafka-clients", range: "3.5.0", kind: "prod" }]);
+    expect(editGradleVersion(g, "org.apache.kafka:kafka-clients", "3.5.0", "3.6.0")).toContain(
+      "org.apache.kafka:kafka-clients:3.6.0:test",
+    );
+  });
+
+  it("does not treat plugin id/version as a coordinate", () => {
+    const g = `plugins { id "org.springframework.boot" version "3.1.0" }`;
+    expect(parseGradle(g)).toEqual([]);
   });
 });
 
@@ -90,6 +124,16 @@ describe("parseVersionCatalog / editVersionCatalog", () => {
   it("edits an inline version and a shorthand string", () => {
     expect(editVersionCatalog(CATALOG, "com.google.code.gson:gson", "2.10", "2.11")).toContain('version = "2.11"');
     expect(editVersionCatalog(CATALOG, "com.squareup.okhttp3:okhttp", "4.11.0", "4.12.0")).toContain("okhttp:4.12.0");
+  });
+
+  it("ignores the [plugins] section, reading only [libraries]", () => {
+    const cat = `[versions]
+k = "1.9.0"
+[plugins]
+kotlin = { id = "org.jetbrains.kotlin.jvm", version.ref = "k" }
+[libraries]
+core = { module = "g:a", version.ref = "k" }`;
+    expect(parseVersionCatalog(cat)).toEqual([{ name: "g:a", range: "1.9.0", kind: "prod" }]);
   });
 });
 

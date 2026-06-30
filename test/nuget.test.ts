@@ -41,6 +41,16 @@ describe("parseCsproj", () => {
   it("reads Central Package Management PackageVersion", () => {
     expect(parseCsproj(CPM)).toEqual([{ name: "xunit", range: "2.6.1", kind: "prod" }]);
   });
+
+  it("handles Update= and an interleaved Condition= attribute", () => {
+    const xml = `<Project><ItemGroup>
+      <PackageReference Update="System.Text.Json" Version="8.0.0" />
+      <PackageReference Include="Polly" Condition="'$(X)'=='y'" Version="8.2.0" />
+    </ItemGroup></Project>`;
+    const map = Object.fromEntries(parseCsproj(xml).map((d) => [d.name, d.range]));
+    expect(map["System.Text.Json"]).toBe("8.0.0"); // Update= treated like Include=
+    expect(map["Polly"]).toBe("8.2.0"); // Version after an unrelated attribute
+  });
 });
 
 describe("editPackageReference", () => {

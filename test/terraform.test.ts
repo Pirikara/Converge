@@ -50,6 +50,32 @@ describe("parseTerraform", () => {
     expect(map["hashicorp/google"]).toBe("= 4.50.0"); // version listed before source
   });
 
+  it("parses inline single-line provider blocks (both fields after commas)", () => {
+    const tf = `terraform {
+  required_providers {
+    google = { source = "hashicorp/google", version = "~> 5.0" }
+  }
+}`;
+    expect(parseTerraform(tf)).toEqual([
+      { name: "hashicorp/google", range: "~> 5.0", kind: "prod" },
+    ]);
+  });
+
+  it("ignores commented-out provider blocks, keeps the real one", () => {
+    const tf = `terraform {
+  required_providers {
+    # aws = { source = "hashicorp/aws", version = "~> 4.0" }
+    google = { source = "hashicorp/google", version = "~> 5.0" }
+  }
+}`;
+    const deps = parseTerraform(tf);
+    expect(deps.map((d) => d.name)).toEqual(["hashicorp/google"]);
+    // the commented "~> 4.0" must not be the edit target
+    const out = editTerraformVersion(tf, "hashicorp/google", "~> 5.0", "~> 6.0");
+    expect(out).toContain('version = "~> 6.0"');
+    expect(out).toContain('# aws = { source = "hashicorp/aws", version = "~> 4.0" }');
+  });
+
   it("extracts registry modules and skips local/git/no-version sources", () => {
     const deps = parseTerraform(TF);
     const names = deps.map((d) => d.name);
