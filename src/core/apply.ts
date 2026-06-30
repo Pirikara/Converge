@@ -21,6 +21,7 @@ import { editActionRef, editActionSha } from "../adapters/github-actions/workflo
 import { editTerraformVersion } from "../adapters/terraform/hcl.js";
 import { editPackageReference } from "../adapters/nuget/csproj.js";
 import { editComposerConstraint } from "../adapters/composer/manifest.js";
+import { editChartVersion } from "../adapters/helm/chart.js";
 import { getResolver } from "../resolve/npm-family.js";
 import type { NpmPackageManager } from "../resolve/pm-detect.js";
 import { cleanupWorkdir } from "../resolve/workdir.js";
@@ -425,6 +426,30 @@ async function resolveComposer(
   }
 }
 
+async function resolveHelm(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  candidate: UpdateCandidate,
+): Promise<CandidateResolution> {
+  // No lockfile regen (helm not run) — rewrite the dependency version in Chart.yaml.
+  const file = await gh.getFile(ref, candidate.manifestPath, base);
+  if (!file) throw new Error(`${candidate.manifestPath} not found`);
+  try {
+    const edited = editChartVersion(file.content, candidate.name, candidate.currentRange, candidate.latestVersion);
+    return {
+      candidate,
+      status: "resolved",
+      changes: [{ name: candidate.name, fromRange: candidate.currentRange, toRange: candidate.latestVersion, cobump: false }],
+      repoFiles: [{ path: candidate.manifestPath, content: edited }],
+      cobumps: 0,
+      warnings: [],
+    };
+  } catch (err) {
+    return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: (err as Error).message };
+  }
+}
+
 /**
  * Resolve a candidate against the live registry, dispatching by ecosystem.
  * npm: package-lock-only ladder (+ co-bump); pip: uv compile (requirements) or
@@ -574,5 +599,6 @@ export async function resolveCandidate(
   if (candidate.ecosystem === "terraform") return resolveTerraform(gh, ref, base, candidate);
   if (candidate.ecosystem === "nuget") return resolveNuget(gh, ref, base, candidate);
   if (candidate.ecosystem === "composer") return resolveComposer(gh, ref, base, candidate);
+  if (candidate.ecosystem === "helm") return resolveHelm(gh, ref, base, candidate);
   return resolveNpmFamily(gh, ref, base, candidate, pm);
 }

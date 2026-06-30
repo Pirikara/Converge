@@ -10,7 +10,7 @@ import { stripJsonComments } from "../config/load.js";
 import { selectCandidates, branchName, type UpdateType } from "../core/plan.js";
 import { resolveCandidate, resolveGroup, type CandidateResolution, type GroupResolution } from "../core/apply.js";
 import { partitionGroups } from "../core/groups.js";
-import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody, renderActionsPrBody, renderTerraformPrBody, renderNugetPrBody, renderComposerPrBody } from "../core/pr-body.js";
+import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody, renderActionsPrBody, renderTerraformPrBody, renderNugetPrBody, renderComposerPrBody, renderHelmPrBody } from "../core/pr-body.js";
 import { evaluateSafety } from "../safety/gate.js";
 import { provenanceStatus } from "../safety/provenance.js";
 import type { SafetyVerdict } from "../safety/types.js";
@@ -47,6 +47,7 @@ const OSV_ECOSYSTEM: Record<EcosystemId, string> = {
   terraform: "", // registry providers/modules aren't OSV-indexed; scan-only
   nuget: "NuGet",
   composer: "Packagist",
+  helm: "", // charts aren't OSV-indexed; scan-only
 };
 
 function getMeta(c: UpdateCandidate): Promise<PackageMeta> {
@@ -297,6 +298,26 @@ async function openPrTerraform(
   const title = `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`;
   await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
   const pr = await gh.createPr(ref, { head: branch, base, title, body: renderTerraformPrBody(c) });
+  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+}
+
+async function openPrHelm(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  res: CandidateResolution,
+): Promise<void> {
+  const branch = branchName(res.candidate);
+  if (await gh.branchExists(ref, branch)) {
+    const existing = await gh.findOpenPr(ref, branch);
+    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
+    return;
+  }
+  const baseSha = await gh.getBranchSha(ref, base);
+  const c = res.candidate;
+  const title = `bump ${c.name} chart from ${c.currentRange} to ${c.latestVersion}`;
+  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
+  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderHelmPrBody(c) });
   process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
 
@@ -562,6 +583,26 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       if (opts.apply) {
         try {
           await openPrTerraform(gh, ref, base, res);
+        } catch (err) {
+          log.error(`${candidate.name}: ${(err as Error).message}`);
+        }
+      }
+      continue;
+    }
+
+    // Helm: charts aren't OSV-indexed — rewrite the dependency version
+    // constraint in Chart.yaml, no lockfile/safety/impact (mirrors Terraform).
+    if (candidate.ecosystem === "helm") {
+      const res = await resolveCandidate(gh, ref, base, candidate);
+      printResolution(res);
+      if (res.status !== "resolved" && res.status !== "resolved-cobump") {
+        unsolvable++;
+        continue;
+      }
+      resolved++;
+      if (opts.apply) {
+        try {
+          await openPrHelm(gh, ref, base, res);
         } catch (err) {
           log.error(`${candidate.name}: ${(err as Error).message}`);
         }

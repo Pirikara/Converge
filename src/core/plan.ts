@@ -10,6 +10,7 @@ import { GitHubActionsAdapter } from "../adapters/github-actions/index.js";
 import { TerraformAdapter } from "../adapters/terraform/index.js";
 import { NuGetAdapter } from "../adapters/nuget/index.js";
 import { ComposerAdapter } from "../adapters/composer/index.js";
+import { HelmAdapter } from "../adapters/helm/index.js";
 import type { EcosystemAdapter, UpdateCandidate } from "../adapters/types.js";
 import type { Config } from "../config/schema.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
@@ -81,6 +82,9 @@ export async function selectCandidates(
   }
   if (config.ecosystems.composer.enabled) {
     ecosystems.push({ adapter: new ComposerAdapter(), dirs: config.ecosystems.composer.directories });
+  }
+  if (config.ecosystems.helm.enabled) {
+    ecosystems.push({ adapter: new HelmAdapter(), dirs: config.ecosystems.helm.directories });
   }
 
   const selected: UpdateCandidate[] = [];

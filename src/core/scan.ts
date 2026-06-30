@@ -10,6 +10,7 @@ import { GitHubActionsAdapter } from "../adapters/github-actions/index.js";
 import { TerraformAdapter } from "../adapters/terraform/index.js";
 import { NuGetAdapter } from "../adapters/nuget/index.js";
 import { ComposerAdapter } from "../adapters/composer/index.js";
+import { HelmAdapter } from "../adapters/helm/index.js";
 import type { EcosystemAdapter, Manifest, UpdateCandidate } from "../adapters/types.js";
 import { resolveManifestPaths, findManifestsMatching } from "./discover.js";
 import { loadConfig } from "../config/load.js";
@@ -64,6 +65,9 @@ export async function scan(repoRootInput: string): Promise<ScanResult> {
   }
   if (config.ecosystems.composer.enabled) {
     enabled.push({ adapter: new ComposerAdapter(), dirs: config.ecosystems.composer.directories });
+  }
+  if (config.ecosystems.helm.enabled) {
+    enabled.push({ adapter: new HelmAdapter(), dirs: config.ecosystems.helm.directories });
   }
 
   const manifests: Manifest[] = [];

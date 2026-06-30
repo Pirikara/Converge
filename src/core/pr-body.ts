@@ -224,6 +224,23 @@ export function renderComposerPrBody(c: UpdateCandidate, safety: SafetyVerdict):
   ].join("\n");
 }
 
+/** PR body for a Helm chart dependency bump (scan-only). */
+export function renderHelmPrBody(c: UpdateCandidate): string {
+  return [
+    `## Converge: ${c.name} chart \`${c.currentRange}\` → \`${c.latestVersion}\``,
+    "",
+    "### ⎈ Helm",
+    `- updates the \`${c.name}\` chart dependency in \`${c.manifestPath}\` (${c.updateType})`,
+    c.currentVersion ? `- highest version satisfying the old constraint: \`${c.currentVersion}\`` : "",
+    "- ⚠️ run `helm dependency update` to refresh `Chart.lock`",
+    "",
+    "---",
+    `🤖 Generated with [Converge](${CONVERGE_URL})`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 /** PR body for a Terraform provider/module constraint bump (scan-only). */
 export function renderTerraformPrBody(c: UpdateCandidate): string {
   const isModule = c.name.split("/").length === 3;

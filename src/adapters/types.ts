@@ -14,7 +14,8 @@ export type EcosystemId =
   | "github-actions"
   | "terraform"
   | "nuget"
-  | "composer";
+  | "composer"
+  | "helm";
 
 export type DependencyKind =
   | "prod"
@@ -32,6 +33,8 @@ export interface DependencyEntry {
    * (`@<sha> # v1.2.3`). `range` then holds the human version from the comment.
    */
   sha?: string;
+  /** helm only: the chart repository URL the version is resolved against. */
+  repository?: string;
 }
 
 export interface Manifest {
