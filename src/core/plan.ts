@@ -8,6 +8,7 @@ import { PyProjectAdapter } from "../adapters/pyproject/index.js";
 import { DockerAdapter } from "../adapters/docker/index.js";
 import { GitHubActionsAdapter } from "../adapters/github-actions/index.js";
 import { TerraformAdapter } from "../adapters/terraform/index.js";
+import { NuGetAdapter } from "../adapters/nuget/index.js";
 import type { EcosystemAdapter, UpdateCandidate } from "../adapters/types.js";
 import type { Config } from "../config/schema.js";
 import { GitHubClient, type RepoRef } from "../github/client.js";
@@ -73,6 +74,9 @@ export async function selectCandidates(
   }
   if (config.ecosystems.terraform.enabled) {
     ecosystems.push({ adapter: new TerraformAdapter(), dirs: config.ecosystems.terraform.directories });
+  }
+  if (config.ecosystems.nuget.enabled) {
+    ecosystems.push({ adapter: new NuGetAdapter(), dirs: config.ecosystems.nuget.directories });
   }
 
   const selected: UpdateCandidate[] = [];

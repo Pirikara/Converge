@@ -12,7 +12,8 @@ export type EcosystemId =
   | "rubygems"
   | "docker"
   | "github-actions"
-  | "terraform";
+  | "terraform"
+  | "nuget";
 
 export type DependencyKind =
   | "prod"

@@ -10,7 +10,7 @@ import { stripJsonComments } from "../config/load.js";
 import { selectCandidates, branchName, type UpdateType } from "../core/plan.js";
 import { resolveCandidate, resolveGroup, type CandidateResolution, type GroupResolution } from "../core/apply.js";
 import { partitionGroups } from "../core/groups.js";
-import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody, renderActionsPrBody, renderTerraformPrBody } from "../core/pr-body.js";
+import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody, renderActionsPrBody, renderTerraformPrBody, renderNugetPrBody } from "../core/pr-body.js";
 import { evaluateSafety } from "../safety/gate.js";
 import { provenanceStatus } from "../safety/provenance.js";
 import type { SafetyVerdict } from "../safety/types.js";
@@ -31,6 +31,7 @@ import { fetchGemMeta } from "../adapters/rubygems/rubygems.js";
 import { fetchCrateMeta } from "../adapters/cargo/cratesio.js";
 import { fetchActionMeta } from "../adapters/github-actions/index.js";
 import { fetchTerraformMeta } from "../adapters/terraform/index.js";
+import { fetchNuGetMeta } from "../adapters/nuget/index.js";
 import type { EcosystemId, PackageMeta, UpdateCandidate } from "../adapters/types.js";
 import { log } from "../logger.js";
 
@@ -43,6 +44,7 @@ const OSV_ECOSYSTEM: Record<EcosystemId, string> = {
   docker: "", // base images aren't OSV-indexed; Docker is scan-only
   "github-actions": "GitHub Actions",
   terraform: "", // registry providers/modules aren't OSV-indexed; scan-only
+  nuget: "NuGet",
 };
 
 function getMeta(c: UpdateCandidate): Promise<PackageMeta> {
@@ -52,6 +54,7 @@ function getMeta(c: UpdateCandidate): Promise<PackageMeta> {
   if (c.ecosystem === "cargo") return fetchCrateMeta(c.name);
   if (c.ecosystem === "github-actions") return fetchActionMeta(c.name);
   if (c.ecosystem === "terraform") return fetchTerraformMeta(c.name);
+  if (c.ecosystem === "nuget") return fetchNuGetMeta(c.name);
   return fetchPackageMeta(c.name);
 }
 
@@ -228,6 +231,27 @@ async function openPrDocker(
   const title = `bump ${c.name} image from ${c.currentRange} to ${c.latestVersion}`;
   await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
   const pr = await gh.createPr(ref, { head: branch, base, title, body: renderDockerPrBody(c) });
+  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+}
+
+async function openPrNuget(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  res: CandidateResolution,
+  safety: SafetyVerdict,
+): Promise<void> {
+  const branch = branchName(res.candidate);
+  if (await gh.branchExists(ref, branch)) {
+    const existing = await gh.findOpenPr(ref, branch);
+    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
+    return;
+  }
+  const baseSha = await gh.getBranchSha(ref, base);
+  const c = res.candidate;
+  const title = `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`;
+  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
+  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderNugetPrBody(c, safety) });
   process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
 
@@ -543,6 +567,36 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       if (opts.apply) {
         try {
           await openPrActions(gh, ref, base, res, verdict);
+        } catch (err) {
+          log.error(`${candidate.name}: ${(err as Error).message}`);
+        }
+      }
+      continue;
+    }
+
+    // NuGet: OSV-indexed (F2 safety applies), but no lockfile regen (dotnet not
+    // run) — gate on safety, then rewrite the PackageReference version.
+    if (candidate.ecosystem === "nuget") {
+      const meta = await getMeta(candidate);
+      const verdict = await safetyOf(candidate, meta);
+      printSafety(verdict);
+      if (verdict.decision === "block" || verdict.decision === "hold") {
+        blocked++;
+        process.stdout.write(
+          `  ${pc.red("⛔ skipped")} — ${verdict.decision === "block" ? "unsafe target" : "within cooldown"}\n`,
+        );
+        continue;
+      }
+      const res = await resolveCandidate(gh, ref, base, candidate);
+      printResolution(res);
+      if (res.status !== "resolved" && res.status !== "resolved-cobump") {
+        unsolvable++;
+        continue;
+      }
+      resolved++;
+      if (opts.apply) {
+        try {
+          await openPrNuget(gh, ref, base, res, verdict);
         } catch (err) {
           log.error(`${candidate.name}: ${(err as Error).message}`);
         }

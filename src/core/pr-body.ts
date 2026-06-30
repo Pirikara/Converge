@@ -184,6 +184,25 @@ export function renderActionsPrBody(c: UpdateCandidate, safety: SafetyVerdict): 
   ].join("\n");
 }
 
+/** PR body for a NuGet PackageReference bump (OSV safety, no lockfile/impact). */
+export function renderNugetPrBody(c: UpdateCandidate, safety: SafetyVerdict): string {
+  return [
+    `## Converge: ${c.name} ${c.currentRange} → ${c.latestVersion}`,
+    "",
+    "### 📦 NuGet",
+    `- updates the \`${c.name}\` PackageReference in \`${c.manifestPath}\` (${c.updateType})`,
+    `- \`${c.currentRange}\` → \`${c.latestVersion}\``,
+    "",
+    ...renderSafety(safety),
+    "",
+    "### Links",
+    `- [nuget.org](https://www.nuget.org/packages/${c.name}/${c.latestVersion})`,
+    "",
+    "---",
+    `🤖 Generated with [Converge](${CONVERGE_URL})`,
+  ].join("\n");
+}
+
 /** PR body for a Terraform provider/module constraint bump (scan-only). */
 export function renderTerraformPrBody(c: UpdateCandidate): string {
   const isModule = c.name.split("/").length === 3;
