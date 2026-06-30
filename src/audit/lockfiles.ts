@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseNpmLockTree, type LockPackage } from "./lockfile-npm.js";
-import { parsePnpmLock, parseYarnLock, parseGoSum, parseGemfileLock, parseCargoLock, parseTomlLockPackages } from "./parsers.js";
+import { parsePnpmLock, parseYarnLock, parseGoSum, parseGemfileLock, parseCargoLock, parseTomlLockPackages, parseComposerLock } from "./parsers.js";
 import { parseGoMod } from "../adapters/gomod/gomod.js";
 import { parseCargoToml } from "../adapters/cargo/cargo-toml.js";
 import { parsePyproject } from "../adapters/pyproject/parse.js";
@@ -37,6 +37,8 @@ export function parseLockfile(
     case "poetry.lock":
     case "uv.lock":
       return { ecosystem: "PyPI", packages: parseTomlLockPackages(content) };
+    case "composer.lock":
+      return { ecosystem: "Packagist", packages: parseComposerLock(content) };
     default:
       return null;
   }
@@ -58,6 +60,26 @@ async function npmDirects(dir: string): Promise<Set<string>> {
       const p = JSON.parse(c) as Record<string, Record<string, string>>;
       for (const b of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
         for (const n of Object.keys(p[b] ?? {})) s.add(n);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return s;
+}
+
+/** Direct deps from composer.json `require` + `require-dev` (excl. php/ext-*). */
+async function composerDirects(dir: string): Promise<Set<string>> {
+  const c = await read(path.join(dir, "composer.json"));
+  const s = new Set<string>();
+  if (c) {
+    try {
+      const p = JSON.parse(c) as Record<string, Record<string, string>>;
+      for (const b of ["require", "require-dev"]) {
+        for (const n of Object.keys(p[b] ?? {})) {
+          if (n === "php" || n.startsWith("ext-") || n.startsWith("lib-") || !n.includes("/")) continue;
+          s.add(n);
+        }
       }
     } catch {
       /* ignore */
@@ -106,6 +128,17 @@ export async function enumerateLocks(dir: string): Promise<EnumeratedLock[]> {
     const ct = await read(path.join(dir, "Cargo.toml"));
     if (ct) for (const d of parseCargoToml(ct)) directs.add(d.name);
     out.push({ file: "Cargo.lock", ecosystem: "crates.io", packages: parseCargoLock(cl), directs });
+  }
+
+  // Composer (PHP) → Packagist
+  const cmp = await read(path.join(dir, "composer.lock"));
+  if (cmp) {
+    out.push({
+      file: "composer.lock",
+      ecosystem: "Packagist",
+      packages: parseComposerLock(cmp),
+      directs: await composerDirects(dir),
+    });
   }
 
   // Python project lockfiles (poetry / uv) → PyPI

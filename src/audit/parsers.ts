@@ -13,6 +13,28 @@ function dedupe(pkgs: LockPackage[]): LockPackage[] {
   return out;
 }
 
+/** composer.lock — `packages` + `packages-dev` arrays of `{ name, version }`. */
+export function parseComposerLock(content: string): LockPackage[] {
+  const out: LockPackage[] = [];
+  let data: { packages?: unknown; "packages-dev"?: unknown };
+  try {
+    data = JSON.parse(content) as typeof data;
+  } catch {
+    return out;
+  }
+  for (const key of ["packages", "packages-dev"] as const) {
+    const arr = data[key];
+    if (!Array.isArray(arr)) continue;
+    for (const p of arr as { name?: unknown; version?: unknown }[]) {
+      if (typeof p.name === "string" && typeof p.version === "string") {
+        // Packagist/OSV versions are normalized without a leading `v`.
+        out.push({ name: p.name, version: p.version.replace(/^v/, "") });
+      }
+    }
+  }
+  return dedupe(out);
+}
+
 /** pnpm-lock.yaml — package keys `name@version:` / `'@scope/name@version(peers)':`. */
 export function parsePnpmLock(content: string): LockPackage[] {
   const re = /^\s{2,}'?((?:@[\w.-]+\/)?[\w.-]+)@([0-9][\w.\-+]*)(?:\([^)]*\))?'?:/;

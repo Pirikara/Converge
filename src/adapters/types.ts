@@ -13,7 +13,8 @@ export type EcosystemId =
   | "docker"
   | "github-actions"
   | "terraform"
-  | "nuget";
+  | "nuget"
+  | "composer";
 
 export type DependencyKind =
   | "prod"
@@ -56,6 +57,13 @@ export interface UpdateCandidate {
   latestVersion: string;
   /** semver delta of currentVersion -> latestVersion. */
   updateType: "major" | "minor" | "patch" | "none" | "unknown";
+  /**
+   * Manifest text to write in place of `currentRange`, when it differs from
+   * `latestVersion`. Used by constraint-based ecosystems (e.g. Composer) where
+   * `latestVersion` holds the concrete version (for OSV/display) but the file
+   * should receive a rewritten constraint like `^2.0`.
+   */
+  writeRange?: string;
   /**
    * github-actions only: when the `uses:` ref is SHA-pinned, the manifest edit
    * swaps the commit SHA (and updates the trailing `# version` comment) instead

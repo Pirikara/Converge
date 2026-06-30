@@ -203,6 +203,27 @@ export function renderNugetPrBody(c: UpdateCandidate, safety: SafetyVerdict): st
   ].join("\n");
 }
 
+/** PR body for a Composer require constraint bump (OSV safety, no lockfile/impact). */
+export function renderComposerPrBody(c: UpdateCandidate, safety: SafetyVerdict): string {
+  const to = c.writeRange ?? c.latestVersion;
+  return [
+    `## Converge: ${c.name} \`${c.currentRange}\` → \`${to}\``,
+    "",
+    "### 🎼 Composer",
+    `- updates the \`${c.name}\` ${c.kind === "dev" ? "require-dev" : "require"} constraint in \`${c.manifestPath}\` (${c.updateType})`,
+    `- \`${c.currentRange}\` → \`${to}\` (latest release: \`${c.latestVersion}\`)`,
+    "- ⚠️ run `composer update " + c.name + "` to refresh `composer.lock`",
+    "",
+    ...renderSafety(safety),
+    "",
+    "### Links",
+    `- [Packagist](https://packagist.org/packages/${c.name})`,
+    "",
+    "---",
+    `🤖 Generated with [Converge](${CONVERGE_URL})`,
+  ].join("\n");
+}
+
 /** PR body for a Terraform provider/module constraint bump (scan-only). */
 export function renderTerraformPrBody(c: UpdateCandidate): string {
   const isModule = c.name.split("/").length === 3;

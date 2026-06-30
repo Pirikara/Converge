@@ -19,6 +19,7 @@ const LOCKFILE_NAMES = new Set([
   "Cargo.lock",
   "poetry.lock",
   "uv.lock",
+  "composer.lock",
 ]);
 
 /** Packages present in `next` but not in `prev` (added or version-changed). */
