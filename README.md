@@ -99,6 +99,38 @@ regenerated lockfile.
 
 Options: `--apply`, `--token <t>`, `--types major,minor,patch`, `--limit <n>`, `-v`.
 
+### Run as a GitHub Action (no server, no hosted app)
+
+The closest thing to a "one-click" setup: Converge ships an action, so you can run it
+on GitHub's own CI runners on a schedule — nothing to host. Add a workflow to **your**
+repo (a full copy is in [`examples/converge.yml`](examples/converge.yml)):
+
+```yaml
+# .github/workflows/converge.yml
+name: Converge
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch: {}
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  converge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: <owner>/Converge@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          apply: "true"          # "false" (default) = dry-run
+          types: "minor,patch"   # add "major" for breaking bumps
+          limit: "10"
+```
+
+Inputs: `repository` (default: the current repo), `token` (required), `apply`, `types`,
+`limit`, `verbose`. The built-in `secrets.GITHUB_TOKEN` is enough for same-repo PRs;
+use a PAT to target another repository.
+
 ### `resolve` — resolve a single bump locally (no PR)
 
 Auto-detects the ecosystem (`package.json` / `requirements.txt` / `Gemfile`) and, for

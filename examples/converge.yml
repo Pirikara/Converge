@@ -1,0 +1,25 @@
+# Copy this into YOUR repository at .github/workflows/converge.yml
+# It runs Converge on a schedule and opens dependency-update PRs — no server,
+# no hosted app; it runs on GitHub's own CI runners.
+
+name: Converge
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # every Monday 06:00 UTC
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  converge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: <owner>/Converge@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          apply: "true" # omit or set "false" for a dry-run
+          types: "minor,patch" # add "major" to include breaking bumps
+          limit: "10"
