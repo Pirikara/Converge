@@ -174,6 +174,71 @@ describe("runRun — Helm (scan-only path)", () => {
   });
 });
 
+const OLD_SHA = "1111111111111111111111111111111111111111";
+const NEW_SHA = "2222222222222222222222222222222222222222";
+
+describe("runRun — GitHub Actions (OSV-gated, SHA pins)", () => {
+  it("bumps a floating tag ref and opens a PR via the Actions renderer", async () => {
+    h.gh = mkGh({ ".github/workflows/ci.yml": "jobs:\n  b:\n    steps:\n      - uses: actions/checkout@v4\n" });
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("api.osv.dev")) return jsonResp({ vulns: [] });
+      if (url.includes("api.github.com")) return jsonResp([{ name: "v5", commit: { sha: NEW_SHA } }, { name: "v4", commit: { sha: OLD_SHA } }]);
+      return notFound;
+    });
+
+    await runRun("o/r", RUN_OPTS);
+    expect(h.gh.createPr).toHaveBeenCalledTimes(1);
+    const pr = h.gh.createPr.mock.calls[0][1];
+    expect(pr.head).toMatch(/^converge\/github-actions\//);
+    expect(pr.body).toContain("⚙️ GitHub Actions");
+    expect(h.gh.commitFiles.mock.calls[0][1].files[0].content).toContain("actions/checkout@v5");
+  });
+
+  it("rewrites a SHA-pinned ref (commit SHA + comment version) end to end", async () => {
+    // Distinct action name so the module-level tags cache doesn't cross tests.
+    h.gh = mkGh({
+      ".github/workflows/ci.yml": `jobs:\n  b:\n    steps:\n      - uses: actions/setup-node@${OLD_SHA} # v4.1.1\n`,
+    });
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("api.osv.dev")) return jsonResp({ vulns: [] });
+      if (url.includes("api.github.com"))
+        return jsonResp([{ name: "v4.2.0", commit: { sha: NEW_SHA } }, { name: "v4.1.1", commit: { sha: OLD_SHA } }]);
+      return notFound;
+    });
+
+    await runRun("o/r", RUN_OPTS);
+    expect(h.gh.createPr).toHaveBeenCalledTimes(1);
+    const committed = h.gh.commitFiles.mock.calls[0][1].files[0].content;
+    expect(committed).toContain(`actions/setup-node@${NEW_SHA} # v4.2.0`);
+    expect(committed).not.toContain(OLD_SHA);
+  });
+});
+
+describe("runRun — Composer (constraint writeRange vs concrete version)", () => {
+  it("writes the rewritten constraint while gating on the concrete version", async () => {
+    h.gh = mkGh({ "composer.json": JSON.stringify({ require: { "monolog/monolog": "^2.9" } }, null, 2) });
+    const osvSeen: string[] = [];
+    fetchMock.mockImplementation(async (url: string, init: any) => {
+      if (url.includes("api.osv.dev")) {
+        osvSeen.push(JSON.parse(init.body).version);
+        return jsonResp({ vulns: [] });
+      }
+      if (url.includes("packagist"))
+        return jsonResp({ packages: { "monolog/monolog": [{ version: "3.5.0" }, { version: "2.9.3" }] } });
+      return notFound;
+    });
+
+    await runRun("o/r", RUN_OPTS);
+    expect(h.gh.createPr).toHaveBeenCalledTimes(1);
+    // OSV is queried against the concrete version, not the constraint.
+    expect(osvSeen).toContain("3.5.0");
+    // composer.json receives the rewritten constraint (^3.5), not the concrete version.
+    const committed = h.gh.commitFiles.mock.calls[0][1].files[0].content;
+    expect(committed).toContain('"monolog/monolog": "^3.5"');
+    expect(h.gh.createPr.mock.calls[0][1].body).toContain("🎼 Composer");
+  });
+});
+
 describe("runRun — datasource resilience", () => {
   it("returns cleanly (no PR, no throw) when the registry errors", async () => {
     h.gh = mkGh({ "pom.xml": POM("com.example", "fresherror", "1.0.0") });
