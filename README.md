@@ -1,6 +1,6 @@
 # Converge
 
-> Hands-off dependency updates that **resolve what Dependabot can't**, **block what you shouldn't install**, and **explain the impact** — across npm, pip, Go, and RubyGems.
+> Hands-off dependency updates that **resolve what Dependabot can't**, **block what you shouldn't install**, and **explain the impact** — across 12 ecosystems.
 
 Converge is a self-hosted, open-source CLI (in the spirit of Renovate) for keeping
 dependencies up to date. Unlike tools that stop at "here's a version bump", Converge:
@@ -31,27 +31,40 @@ code.** Every resolver uses a metadata-only / lockfile-only mode.
 
 ## Supported ecosystems
 
-| Ecosystem | Manifest | Outdated scan | Safety (OSV) | Resolution + PR |
-|---|---|---|---|---|
-| **npm** | `package.json` | ✅ | ✅ | ✅ npm · pnpm · Yarn Berry · bun |
-| **pip** | `requirements.txt` | ✅ | ✅ | ✅ via `uv` |
-| **Go** | `go.mod` | ✅ | ✅ | ✅ via `go get` |
-| **RubyGems** | `Gemfile` | ✅ | ✅ | ✅ via `bundle lock` |
+Twelve, in two tiers. **Lockfile-regenerating** managers rebuild the lockfile (no code
+run) so co-bumps and transitive changes are captured. **Edit-only** managers rewrite the
+declared version/constraint in the manifest (no toolchain required).
 
-Yarn Classic (v1) is intentionally unsupported (deprecated). pip/RubyGems resolution
-currently acts on exact pins (`==` / `gem "x", "1.2.3"`).
+| Ecosystem | Manifest(s) | Safety (OSV) | Resolution |
+|---|---|---|---|
+| **npm** | `package.json` | ✅ | lockfile — npm · pnpm · Yarn Berry · bun (iterative co-bump) |
+| **pip** | `requirements.txt`, `pyproject.toml` | ✅ | lockfile — via `uv` |
+| **Go** | `go.mod` | ✅ | lockfile — via `go get` |
+| **RubyGems** | `Gemfile` | ✅ | lockfile — via `bundle lock` |
+| **Cargo** | `Cargo.toml` | ✅ | lockfile — via `cargo update` |
+| **NuGet** | `*.csproj`, `Directory.Packages.props` | ✅ | edit-only |
+| **Composer** | `composer.json` (+ `composer.lock` audit) | ✅ | edit-only |
+| **Maven / Gradle** | `pom.xml`, `build.gradle(.kts)`, `libs.versions.toml` | ✅ | edit-only |
+| **GitHub Actions** | `.github/workflows/*.yml`, `action.yml` | ✅ | edit-only (incl. SHA-pinned refs) |
+| **Docker** | `Dockerfile`, `docker-compose.yml` | — | edit-only (base-image tags) |
+| **Terraform** | `*.tf` | — | edit-only (providers + registry modules) |
+| **Helm** | `Chart.yaml` | — | edit-only (chart dependencies) |
+
+OSV covers every ecosystem OSV.dev indexes; Docker/Terraform/Helm aren't OSV-indexed, so
+they're scan-and-bump only. Yarn Classic (v1) is intentionally unsupported (deprecated).
+**Grouping** bundles related updates into one PR (see `groups` in config).
 
 ---
 
 ## Requirements
 
 - **Node.js ≥ 20** (to run Converge itself)
-- A **GitHub token** for `run` (PAT with `repo` scope, or a self-hosted GitHub App token)
-- The toolchain for each ecosystem you resolve (only what you use):
+- A **GitHub token** for `run` (PAT with `repo` scope, or `secrets.GITHUB_TOKEN` in Actions)
+- A toolchain **only for the lockfile-regenerating ecosystems you use**:
   - npm → bundled with Node; **pnpm / Yarn Berry** → `corepack` (bundled with Node); **bun** → `bun`
-  - pip → [`uv`](https://docs.astral.sh/uv/)
-  - Go → `go`
-  - RubyGems → `bundler` (Ruby)
+  - pip → [`uv`](https://docs.astral.sh/uv/) · Go → `go` · RubyGems → `bundler` · Cargo → `cargo`
+  - The edit-only ecosystems (NuGet, Composer, Maven/Gradle, Actions, Docker, Terraform, Helm)
+    need **no toolchain** — Converge rewrites the manifest directly.
 
 Converge runs these in metadata/lockfile-only modes, so packages are never built or executed.
 
@@ -62,11 +75,14 @@ Converge runs these in metadata/lockfile-only modes, so packages are never built
 Not yet published to a registry — build from source:
 
 ```bash
-git clone <your-fork-or-repo> converge && cd converge
-pnpm install
-pnpm build
+git clone https://github.com/Pirikara/Converge && cd Converge
+pnpm install       # or: npm install
+pnpm build         # or: npm run build
 node dist/cli.js --help
 ```
+
+To run it on a schedule with zero infrastructure, use the
+[GitHub Action](#run-as-a-github-action-no-server-no-hosted-app) instead.
 
 ---
 
@@ -77,6 +93,19 @@ node dist/cli.js --help
 ```bash
 node dist/cli.js scan ./path/to/repo
 node dist/cli.js scan ./repo --json
+```
+
+### `audit` — scan the whole lockfile tree for malware & vulns (local, read-only)
+
+Walks the **transitive** dependency tree from your lockfiles (npm/pnpm/yarn, Cargo,
+Go, Gemfile, poetry/uv, composer) and checks every package against OSV — catching
+malware and vulnerabilities that direct-only scanners miss.
+
+```bash
+node dist/cli.js audit ./repo
+# MALWARE  event-stream@3.3.6  [npm] [transitive]
+# vuln     express@4.17.1      [npm] [direct]
+# warn 2 affected package(s): 1 malware, 1 transitive (1 would be missed by direct-only scanners)
 ```
 
 ### `run` — propose safe, resolved update PRs for a GitHub repo
@@ -119,7 +148,7 @@ jobs:
   converge:
     runs-on: ubuntu-latest
     steps:
-      - uses: <owner>/Converge@v1
+      - uses: Pirikara/Converge@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           apply: "true"          # "false" (default) = dry-run
@@ -148,20 +177,26 @@ node dist/cli.js resolve ./backend langchain 1.3.11
 Optional, at the repo root. JSON with comments (JSON5) is allowed. All fields are
 optional with sensible defaults.
 
+All 12 ecosystems are enabled by default; list one only to change it.
+
 ```json5
 {
   "ecosystems": {
-    "npm":      { "enabled": true, "directories": ["frontend/"] },
-    "pip":      { "enabled": true },
-    "gomod":    { "enabled": true },
-    "rubygems": { "enabled": true }
+    "npm":    { "enabled": true, "directories": ["frontend/"] },
+    "docker": { "enabled": false }   // opt an ecosystem out
+    // pip, gomod, rubygems, cargo, nuget, composer, maven,
+    // "github-actions", terraform, helm are on by default
   },
   "safety": {
     "cooldownDays": 3,            // don't adopt a version younger than this
     "onKnownMalware": "block",    // block | warn | hold
     "onSuspicious": "hold",       // provenance downgrade etc.
     "allow": [{ "pkg": "some-pkg", "version": "1.2.3" }]  // false-positive overrides
-  }
+  },
+  "groups": [
+    // bundle related updates into a single PR (same ecosystem + directory)
+    { "name": "eslint", "match": ["eslint*", "@typescript-eslint/*"] }
+  ]
 }
 ```
 
@@ -187,11 +222,14 @@ Converge is early. Known gaps:
 
 - pip / RubyGems outdated detection acts on **exact pins** only (range floors need
   installed-version modelling from the lockfile).
-- npm has **iterative co-bump**; other ecosystems resolve directly (peer conflicts in
-  pnpm/yarn/bun are surfaced as warnings).
-- No **lockfile-only maintenance** or **transitive-dependency security updates** yet.
+- npm has **iterative co-bump**; other lockfile ecosystems resolve directly (peer
+  conflicts in pnpm/yarn/bun are surfaced as warnings). Edit-only ecosystems don't
+  regenerate their lockfile — the PR notes when you should (e.g. `composer update`).
+- Maven `${property}` / parent / BOM-managed versions and Gradle catalog multi-line
+  entries aren't bumped yet; Terraform/Helm resolve http(s) registries (not OCI).
 - Impact usage-mapping is best-effort (distribution name ≠ import name in some pip/Ruby cases).
 - Provenance signals are npm-only for now.
+- Distribution is build-from-source or the GitHub Action; not yet on npm.
 
 ---
 
