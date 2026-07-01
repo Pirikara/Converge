@@ -203,6 +203,18 @@ pnpm test        # vitest
 pnpm build
 ```
 
+## Data & attribution
+
+Converge queries the [OSV.dev](https://osv.dev) API at runtime for vulnerability and
+malware advisories — it bundles no OSV data. Advisory records remain © their sources
+under their own licenses: CC-BY-4.0 (GitHub/GHSA, PyPA, Go), CC0-1.0 (RustSec),
+Apache-2.0 (OpenSSF Malicious Packages), and others aggregated by OSV. Each advisory
+Converge surfaces links back to `osv.dev/vulnerability/<id>`. See the
+[OSV data sources](https://google.github.io/osv.dev/data/) and [`NOTICE`](NOTICE).
+
+Converge is an independent, clean-room implementation in the spirit of Renovate; it
+contains no Renovate (or other tool) code.
+
 ## License
 
-MIT
+MIT — see [`LICENSE`](LICENSE).

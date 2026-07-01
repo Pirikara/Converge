@@ -1,0 +1,31 @@
+Converge
+Copyright (c) 2026 Converge contributors
+
+This product is licensed under the MIT License (see LICENSE).
+
+Converge is an independent, clean-room implementation. It contains no code from
+Renovate or any other dependency-update tool.
+
+
+================================================================================
+Vulnerability and malware data
+================================================================================
+
+Converge queries the OSV.dev API (https://osv.dev) at runtime to detect known
+vulnerabilities and malware. No OSV data is bundled with Converge; advisory
+records are fetched live and remain (c) their respective sources under their own
+licenses, including:
+
+  - GitHub Advisory Database (GHSA)   -- CC-BY-4.0
+  - PyPI Advisory Database (PyPA)     -- CC-BY-4.0
+  - Go Vulnerability Database         -- CC-BY-4.0
+  - RustSec Advisory Database         -- CC0-1.0
+  - OpenSSF Malicious Packages        -- Apache-2.0
+  - and other sources aggregated by OSV.dev
+
+Each advisory Converge surfaces links back to https://osv.dev/vulnerability/<id>.
+For the full source list and licenses, see https://google.github.io/osv.dev/data/.
+
+Converge does not use or bundle osv-scanner; it calls the public OSV.dev HTTP API
+directly. The API base is configurable via the CONVERGE_OSV_API environment
+variable.
