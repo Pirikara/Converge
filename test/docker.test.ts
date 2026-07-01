@@ -15,6 +15,17 @@ FROM redis`;
     const deps = parseDockerfile(df);
     expect(deps.map((d) => `${d.name}:${d.range}`)).toEqual(["node:18-alpine", "python:3.11"]);
   });
+
+  it("disambiguates a registry host:port colon from the tag colon", () => {
+    const df = `FROM --platform=linux/amd64 registry.example.com:5000/team/app:2.1.0
+FROM registry.example.com:5000/team/untagged`;
+    const deps = parseDockerfile(df);
+    // tagged image: port kept in the name, tag is just the trailing version
+    expect(deps).toEqual([
+      { name: "registry.example.com:5000/team/app", range: "2.1.0", kind: "prod" },
+    ]);
+    // the untagged host:port image (colon is the port) is not treated as tagged
+  });
 });
 
 describe("editDockerfileTag", () => {
