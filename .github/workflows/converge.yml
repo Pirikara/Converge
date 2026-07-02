@@ -1,0 +1,23 @@
+# Converge dogfooding itself: keep Converge's own dependencies up to date
+# using Converge. Runs on a schedule and can be triggered manually.
+name: Converge
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # every Monday 06:00 UTC
+  workflow_dispatch: {} # run on demand from the Actions tab
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  converge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Pirikara/Converge@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          apply: "true"
+          types: "minor,patch"
+          limit: "10"
