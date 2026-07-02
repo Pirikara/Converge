@@ -1,5 +1,7 @@
 # Converge
 
+[![CI](https://github.com/Pirikara/Converge/actions/workflows/ci.yml/badge.svg)](https://github.com/Pirikara/Converge/actions/workflows/ci.yml)
+
 > Hands-off dependency updates that **resolve what Dependabot can't**, **block what you shouldn't install**, and **explain the impact** — across 12 ecosystems.
 
 Converge is a self-hosted, open-source CLI (in the spirit of Renovate) for keeping
