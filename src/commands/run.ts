@@ -7,7 +7,7 @@ import {
 } from "../github/client.js";
 import { ConfigSchema, type Config } from "../config/schema.js";
 import { stripJsonComments } from "../config/load.js";
-import { selectCandidates, branchName, type UpdateType } from "../core/plan.js";
+import { selectCandidates, branchName, streamId, type UpdateType } from "../core/plan.js";
 import { resolveCandidate, resolveGroup, type CandidateResolution, type GroupResolution } from "../core/apply.js";
 import { partitionGroups } from "../core/groups.js";
 import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody, renderActionsPrBody, renderTerraformPrBody, renderNugetPrBody, renderComposerPrBody, renderHelmPrBody, renderMavenPrBody } from "../core/pr-body.js";
@@ -193,6 +193,38 @@ function printIntroduced(findings: AuditFinding[]): void {
   }
 }
 
+function sanitizeBranch(s: string): string {
+  return s.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Create the stream PR, or refresh the existing one to the new target in place
+ * (same branch) — so a dependency has one live PR that moves forward, never a
+ * pile-up of one PR per version. When the title (which encodes the target) is
+ * unchanged, nothing is rewritten.
+ */
+async function upsertPr(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  spec: { branch: string; title: string; body: string; files: { path: string; content: string }[] },
+): Promise<void> {
+  const existing = await gh.findOpenPr(ref, spec.branch);
+  if (existing && existing.title === spec.title) {
+    process.stdout.write(`  up to date → PR #${existing.number} ${pc.dim("(no change)")}\n`);
+    return;
+  }
+  const baseSha = await gh.getBranchSha(ref, base);
+  await gh.commitFiles(ref, { branch: spec.branch, baseSha, message: spec.title, files: spec.files });
+  if (existing) {
+    await gh.updatePr(ref, existing.number, { title: spec.title, body: spec.body });
+    process.stdout.write(`  ${pc.yellow("refreshed")} PR #${existing.number} → ${spec.title}\n`);
+  } else {
+    const pr = await gh.createPr(ref, { head: spec.branch, base, title: spec.title, body: spec.body });
+    process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+  }
+}
+
 async function openPr(
   gh: GitHubClient,
   ref: RepoRef,
@@ -203,198 +235,100 @@ async function openPr(
   deprecation: DeprecationFinding[],
   introduced: AuditFinding[],
 ): Promise<void> {
-  const branch = branchName(res.candidate);
-  if (await gh.branchExists(ref, branch)) {
-    const existing = await gh.findOpenPr(ref, branch);
-    process.stdout.write(
-      `  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`,
-    );
-    return;
-  }
-  const baseSha = await gh.getBranchSha(ref, base);
-  const title = renderPrTitle(res.candidate, res);
-  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
-  const pr = await gh.createPr(ref, {
-    head: branch,
-    base,
-    title,
+  await upsertPr(gh, ref, base, {
+    branch: branchName(res.candidate),
+    title: renderPrTitle(res.candidate, res),
     body: renderPrBody(res.candidate, res, safety, impact, deprecation, introduced),
+    files: res.repoFiles,
   });
-  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
 
-async function openPrDocker(
-  gh: GitHubClient,
-  ref: RepoRef,
-  base: string,
-  res: CandidateResolution,
-): Promise<void> {
-  const branch = branchName(res.candidate);
-  if (await gh.branchExists(ref, branch)) {
-    const existing = await gh.findOpenPr(ref, branch);
-    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
-    return;
-  }
-  const baseSha = await gh.getBranchSha(ref, base);
+async function openPrDocker(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution): Promise<void> {
   const c = res.candidate;
-  const title = `bump ${c.name} image from ${c.currentRange} to ${c.latestVersion}`;
-  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
-  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderDockerPrBody(c) });
-  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+  await upsertPr(gh, ref, base, {
+    branch: branchName(c),
+    title: `bump ${c.name} image from ${c.currentRange} to ${c.latestVersion}`,
+    body: renderDockerPrBody(c),
+    files: res.repoFiles,
+  });
 }
 
-async function openPrNuget(
-  gh: GitHubClient,
-  ref: RepoRef,
-  base: string,
-  res: CandidateResolution,
-  safety: SafetyVerdict,
-): Promise<void> {
-  const branch = branchName(res.candidate);
-  if (await gh.branchExists(ref, branch)) {
-    const existing = await gh.findOpenPr(ref, branch);
-    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
-    return;
-  }
-  const baseSha = await gh.getBranchSha(ref, base);
+async function openPrNuget(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict): Promise<void> {
   const c = res.candidate;
-  const title = `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`;
-  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
-  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderNugetPrBody(c, safety) });
-  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+  await upsertPr(gh, ref, base, {
+    branch: branchName(c),
+    title: `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`,
+    body: renderNugetPrBody(c, safety),
+    files: res.repoFiles,
+  });
 }
 
-async function openPrMaven(
-  gh: GitHubClient,
-  ref: RepoRef,
-  base: string,
-  res: CandidateResolution,
-  safety: SafetyVerdict,
-): Promise<void> {
-  const branch = branchName(res.candidate);
-  if (await gh.branchExists(ref, branch)) {
-    const existing = await gh.findOpenPr(ref, branch);
-    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
-    return;
-  }
-  const baseSha = await gh.getBranchSha(ref, base);
+async function openPrMaven(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict): Promise<void> {
   const c = res.candidate;
-  const title = `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`;
-  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
-  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderMavenPrBody(c, safety) });
-  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+  await upsertPr(gh, ref, base, {
+    branch: branchName(c),
+    title: `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`,
+    body: renderMavenPrBody(c, safety),
+    files: res.repoFiles,
+  });
 }
 
-async function openPrComposer(
-  gh: GitHubClient,
-  ref: RepoRef,
-  base: string,
-  res: CandidateResolution,
-  safety: SafetyVerdict,
-): Promise<void> {
-  const branch = branchName(res.candidate);
-  if (await gh.branchExists(ref, branch)) {
-    const existing = await gh.findOpenPr(ref, branch);
-    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
-    return;
-  }
-  const baseSha = await gh.getBranchSha(ref, base);
+async function openPrComposer(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict): Promise<void> {
   const c = res.candidate;
   const to = c.writeRange ?? c.latestVersion;
-  const title = `bump ${c.name} from ${c.currentRange} to ${to}`;
-  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
-  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderComposerPrBody(c, safety) });
-  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+  await upsertPr(gh, ref, base, {
+    branch: branchName(c),
+    title: `bump ${c.name} from ${c.currentRange} to ${to}`,
+    body: renderComposerPrBody(c, safety),
+    files: res.repoFiles,
+  });
 }
 
-async function openPrTerraform(
-  gh: GitHubClient,
-  ref: RepoRef,
-  base: string,
-  res: CandidateResolution,
-): Promise<void> {
-  const branch = branchName(res.candidate);
-  if (await gh.branchExists(ref, branch)) {
-    const existing = await gh.findOpenPr(ref, branch);
-    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
-    return;
-  }
-  const baseSha = await gh.getBranchSha(ref, base);
+async function openPrTerraform(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution): Promise<void> {
   const c = res.candidate;
-  const title = `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`;
-  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
-  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderTerraformPrBody(c) });
-  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+  await upsertPr(gh, ref, base, {
+    branch: branchName(c),
+    title: `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`,
+    body: renderTerraformPrBody(c),
+    files: res.repoFiles,
+  });
 }
 
-async function openPrHelm(
-  gh: GitHubClient,
-  ref: RepoRef,
-  base: string,
-  res: CandidateResolution,
-): Promise<void> {
-  const branch = branchName(res.candidate);
-  if (await gh.branchExists(ref, branch)) {
-    const existing = await gh.findOpenPr(ref, branch);
-    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
-    return;
-  }
-  const baseSha = await gh.getBranchSha(ref, base);
+async function openPrHelm(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution): Promise<void> {
   const c = res.candidate;
-  const title = `bump ${c.name} chart from ${c.currentRange} to ${c.latestVersion}`;
-  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
-  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderHelmPrBody(c) });
-  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+  await upsertPr(gh, ref, base, {
+    branch: branchName(c),
+    title: `bump ${c.name} chart from ${c.currentRange} to ${c.latestVersion}`,
+    body: renderHelmPrBody(c),
+    files: res.repoFiles,
+  });
 }
 
-async function openPrActions(
-  gh: GitHubClient,
-  ref: RepoRef,
-  base: string,
-  res: CandidateResolution,
-  safety: SafetyVerdict,
-): Promise<void> {
+async function openPrActions(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict): Promise<void> {
   const c = res.candidate;
-  // The manifest dir (`.github/workflows`) can't seed a branch name (a ref
-  // component may not start with a dot), and the same action can appear in
-  // multiple workflows — key the branch on the workflow file stem instead.
+  // The manifest dir (`.github/workflows`) can't seed a branch (a ref component
+  // may not start with a dot), and the same action can appear in multiple
+  // workflows — key on the workflow file stem + version-less stream id.
   const stem = sanitizeBranch((c.manifestPath.split("/").pop() ?? "").replace(/\.ya?ml$/i, ""));
-  const branch = `converge/github-actions/${stem}-${sanitizeBranch(c.name)}-${sanitizeBranch(c.latestVersion)}`;
-  if (await gh.branchExists(ref, branch)) {
-    const existing = await gh.findOpenPr(ref, branch);
-    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
-    return;
-  }
-  const baseSha = await gh.getBranchSha(ref, base);
-  const title = `bump ${c.name} action from ${c.currentRange} to ${c.latestVersion}`;
-  await gh.commitFiles(ref, { branch, baseSha, message: title, files: res.repoFiles });
-  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderActionsPrBody(c, safety) });
-  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+  await upsertPr(gh, ref, base, {
+    branch: `converge/github-actions/${stem}-${streamId(c)}`,
+    title: `bump ${c.name} action from ${c.currentRange} to ${c.latestVersion}`,
+    body: renderActionsPrBody(c, safety),
+    files: res.repoFiles,
+  });
 }
 
-function sanitizeBranch(s: string): string {
-  return s.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-async function openPrGroup(
-  gh: GitHubClient,
-  ref: RepoRef,
-  base: string,
-  gres: GroupResolution,
-  introduced: AuditFinding[],
-): Promise<void> {
+async function openPrGroup(gh: GitHubClient, ref: RepoRef, base: string, gres: GroupResolution, introduced: AuditFinding[]): Promise<void> {
   const c0 = gres.candidates[0]!;
-  const branch = `converge/group/${sanitizeBranch(gres.groupName)}-${sanitizeBranch(c0.dir)}`;
-  if (await gh.branchExists(ref, branch)) {
-    const existing = await gh.findOpenPr(ref, branch);
-    process.stdout.write(`  ${existing ? `exists → PR #${existing}` : "branch exists"} ${pc.dim("(skipped)")}\n`);
-    return;
-  }
-  const baseSha = await gh.getBranchSha(ref, base);
-  const title = `group ${gres.groupName}: ${gres.changes.length} updates`;
-  await gh.commitFiles(ref, { branch, baseSha, message: title, files: gres.repoFiles });
-  const pr = await gh.createPr(ref, { head: branch, base, title, body: renderGroupPrBody(gres.groupName, gres.changes, introduced) });
-  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+  // Title encodes the members' targets so an unchanged group is a no-op while a
+  // changed one refreshes the same PR.
+  const summary = gres.changes.map((ch) => `${ch.name}@${ch.toRange}`).join(", ");
+  await upsertPr(gh, ref, base, {
+    branch: `converge/group/${sanitizeBranch(gres.groupName)}-${sanitizeBranch(c0.dir)}`,
+    title: `group ${gres.groupName}: ${summary}`,
+    body: renderGroupPrBody(gres.groupName, gres.changes, introduced),
+    files: gres.repoFiles,
+  });
 }
 
 export async function runRun(repoInput: string, opts: RunOptions): Promise<number> {

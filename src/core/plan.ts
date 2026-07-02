@@ -30,10 +30,22 @@ function sanitize(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-/** Deterministic, idempotent branch name encoding the ecosystem + target version. */
+/**
+ * A dependency's *update stream* id: name + target major (e.g. `zod-3.x`), so a
+ * branch is reused as newer versions land within the same major and separate
+ * majors get their own PR. Version-less — the branch is refreshed in place
+ * rather than a new one created per patch release.
+ */
+export function streamId(c: UpdateCandidate): string {
+  const major = /\d+/.exec(c.latestVersion.replace(/^[^\d]*/, ""))?.[0];
+  const name = sanitize(c.name);
+  return major ? `${name}-${major}.x` : name;
+}
+
+/** Deterministic, idempotent branch name for a candidate's update stream. */
 export function branchName(c: UpdateCandidate): string {
   const scope = c.dir === "." ? "" : `${sanitize(c.dir)}-`;
-  return `converge/${c.ecosystem}/${scope}${sanitize(c.name)}-${sanitize(c.latestVersion)}`;
+  return `converge/${c.ecosystem}/${scope}${streamId(c)}`;
 }
 
 /**

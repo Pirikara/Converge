@@ -74,13 +74,22 @@ describe("selectCandidates", () => {
 });
 
 describe("branchName", () => {
-  it("encodes dir, name, and target version idempotently", () => {
+  it("encodes dir + name + target major as a version-less stream", () => {
     const c = {
       ecosystem: "npm",
       dir: "frontend",
       name: "@scope/pkg",
-      latestVersion: "2.0.0",
+      latestVersion: "2.3.4",
     } as UpdateCandidate;
-    expect(branchName(c)).toBe("converge/npm/frontend-scope-pkg-2.0.0");
+    // version-less: the branch is reused across 2.x releases, refreshed in place
+    expect(branchName(c)).toBe("converge/npm/frontend-scope-pkg-2.x");
+  });
+
+  it("separates majors and handles operator-prefixed targets", () => {
+    const mk = (name: string, latestVersion: string) =>
+      branchName({ ecosystem: "npm", dir: ".", name, latestVersion } as UpdateCandidate);
+    expect(mk("zod", "3.25.76")).toBe("converge/npm/zod-3.x");
+    expect(mk("zod", "4.0.0")).toBe("converge/npm/zod-4.x"); // different major → own PR
+    expect(mk("aws", "~> 6.0")).toBe("converge/npm/aws-6.x"); // constraint target
   });
 });

@@ -16,6 +16,7 @@ vi.mock("../src/github/client.js", () => {
     getBranchSha(...a: any[]) { return h.gh.getBranchSha(...a); }
     commitFiles(...a: any[]) { return h.gh.commitFiles(...a); }
     createPr(...a: any[]) { return h.gh.createPr(...a); }
+    updatePr(...a: any[]) { return h.gh.updatePr(...a); }
   }
   return {
     GitHubClient,
@@ -58,6 +59,7 @@ function mkGh(files: Record<string, string>) {
     getBranchSha: vi.fn(async () => "basesha"),
     commitFiles: vi.fn(async () => undefined),
     createPr: vi.fn(async () => ({ number: 1, url: "https://github.com/o/r/pull/1" })),
+    updatePr: vi.fn(async () => undefined),
   };
 }
 
@@ -128,10 +130,13 @@ describe("runRun — Maven (OSV-gated edit path)", () => {
     expect(h.gh.commitFiles).not.toHaveBeenCalled();
   });
 
-  it("skips when the branch already exists (idempotent)", async () => {
+  it("no-ops when an open PR already targets the same version (idempotent)", async () => {
     h.gh = mkGh({ "pom.xml": POM("com.fasterxml.jackson.core", "jackson-databind", "2.15.0") });
-    h.gh.branchExists.mockResolvedValue(true);
-    h.gh.findOpenPr.mockResolvedValue(7);
+    // an existing PR whose title matches the intended one → nothing rewritten
+    h.gh.findOpenPr.mockResolvedValue({
+      number: 7,
+      title: "bump com.fasterxml.jackson.core:jackson-databind from 2.15.0 to 2.18.0",
+    });
     fetchMock.mockImplementation(async (url: string) => {
       if (url.includes("api.osv.dev")) return jsonResp({ vulns: [] });
       if (url.includes("maven-metadata")) return textResp(MAVEN_META);
@@ -140,6 +145,29 @@ describe("runRun — Maven (OSV-gated edit path)", () => {
 
     await runRun("o/r", RUN_OPTS);
     expect(h.gh.createPr).not.toHaveBeenCalled();
+    expect(h.gh.commitFiles).not.toHaveBeenCalled();
+    expect(h.gh.updatePr).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the existing stream PR in place when the target moved", async () => {
+    h.gh = mkGh({ "pom.xml": POM("com.fasterxml.jackson.core", "jackson-databind", "2.15.0") });
+    // an open PR on the same stream branch, but at an older target version
+    h.gh.findOpenPr.mockResolvedValue({
+      number: 7,
+      title: "bump com.fasterxml.jackson.core:jackson-databind from 2.15.0 to 2.17.0",
+    });
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("api.osv.dev")) return jsonResp({ vulns: [] });
+      if (url.includes("maven-metadata")) return textResp(MAVEN_META);
+      return notFound;
+    });
+
+    await runRun("o/r", RUN_OPTS);
+    expect(h.gh.createPr).not.toHaveBeenCalled(); // reused, not duplicated
+    expect(h.gh.commitFiles).toHaveBeenCalledTimes(1); // branch force-updated
+    expect(h.gh.updatePr).toHaveBeenCalledTimes(1);
+    expect(h.gh.updatePr.mock.calls[0][1]).toBe(7);
+    expect(h.gh.updatePr.mock.calls[0][2].title).toContain("to 2.18.0");
   });
 
   it("does not open a PR in dry-run mode", async () => {

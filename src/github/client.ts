@@ -238,23 +238,35 @@ export class GitHubClient {
       tree: tree.data.sha,
       parents: [params.baseSha],
     });
-    await this.octokit.git.createRef({
-      ...ref,
-      ref: `refs/heads/${params.branch}`,
-      sha: commit.data.sha,
-    });
+    // Upsert the branch: create it, or force-move an existing one to the new
+    // commit (so a stream branch is refreshed to the latest target in place).
+    try {
+      await this.octokit.git.createRef({
+        ...ref,
+        ref: `refs/heads/${params.branch}`,
+        sha: commit.data.sha,
+      });
+    } catch {
+      await this.octokit.git.updateRef({
+        ...ref,
+        ref: `heads/${params.branch}`,
+        sha: commit.data.sha,
+        force: true,
+      });
+    }
     log.debug(`committed ${params.files.length} file(s) to ${params.branch}`);
     return commit.data.sha;
   }
 
-  /** Find an open PR whose head branch matches, if any. */
-  async findOpenPr(ref: RepoRef, head: string): Promise<number | null> {
+  /** Find an open PR whose head branch matches, if any (with its title). */
+  async findOpenPr(ref: RepoRef, head: string): Promise<{ number: number; title: string } | null> {
     const { data } = await this.octokit.pulls.list({
       ...ref,
       state: "open",
       head: `${ref.owner}:${head}`,
     });
-    return data[0]?.number ?? null;
+    const pr = data[0];
+    return pr ? { number: pr.number, title: pr.title } : null;
   }
 
   async createPr(
@@ -269,5 +281,19 @@ export class GitHubClient {
       body: params.body,
     });
     return { number: data.number, url: data.html_url };
+  }
+
+  /** Update an existing PR's title + body (used to refresh a stream PR). */
+  async updatePr(
+    ref: RepoRef,
+    number: number,
+    params: { title: string; body: string },
+  ): Promise<void> {
+    await this.octokit.pulls.update({
+      ...ref,
+      pull_number: number,
+      title: params.title,
+      body: params.body,
+    });
   }
 }
