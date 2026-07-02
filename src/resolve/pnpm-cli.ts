@@ -34,7 +34,9 @@ async function pnpmCommand(workdir: string): Promise<string[]> {
   } catch {
     /* ignore */
   }
-  return ["pnpm"];
+  // No pin: still go through corepack (bundled with Node ≥16.9) rather than a
+  // bare `pnpm`, which may be absent (e.g. on CI runners → spawn ENOENT).
+  return ["corepack", "pnpm"];
 }
 
 /**
