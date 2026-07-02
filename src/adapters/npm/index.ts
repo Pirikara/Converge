@@ -35,9 +35,43 @@ function classifyUpdate(from: string | null, to: string): UpdateCandidate["updat
   return ver.diff(from, to);
 }
 
+/**
+ * "in-range" candidate: never leave the declared range's major. Targets the
+ * highest published version that still satisfies the range and, when that sits
+ * above the range's floor, bumps the floor to it (e.g. "^3.23.8" → "^3.25.76").
+ * An exact pin or an already-current floor yields no update.
+ */
+function inRangeCandidate(
+  manifest: Manifest,
+  dep: DependencyEntry,
+  versions: string[],
+): UpdateCandidate | null {
+  const floor = semver.minVersion(dep.range)?.version;
+  const inRangeMax = ver.maxSatisfying(versions, dep.range);
+  if (!floor || !inRangeMax || ver.compare(inRangeMax, floor) <= 0) return null;
+  return {
+    ecosystem: "npm",
+    manifestPath: manifest.path,
+    dir: manifest.dir,
+    name: dep.name,
+    kind: dep.kind,
+    currentRange: dep.range,
+    currentVersion: floor,
+    latestVersion: inRangeMax,
+    updateType: classifyUpdate(floor, inRangeMax),
+  };
+}
+
+export type UpdateStrategy = "latest" | "in-range";
+
 export class NpmAdapter implements EcosystemAdapter {
   readonly id = "npm" as const;
   readonly manifestFilenames = ["package.json"];
+
+  /** "latest" (default) targets the dist-tag latest; "in-range" stays within
+   * the declared range's major (bumps the range floor to the highest in-range
+   * version). */
+  constructor(private readonly strategy: UpdateStrategy = "latest") {}
 
   async parseManifest(absPath: string, repoRoot: string): Promise<Manifest> {
     const raw = await readFile(absPath, "utf8");
@@ -83,6 +117,10 @@ export class NpmAdapter implements EcosystemAdapter {
         }
         const meta = await fetchPackageMeta(dep.name);
         if (!meta.latest) return null;
+
+        if (this.strategy === "in-range") {
+          return inRangeCandidate(manifest, dep, meta.versions);
+        }
 
         const currentVersion = ver.maxSatisfying(meta.versions, dep.range);
 

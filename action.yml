@@ -21,6 +21,10 @@ inputs:
     description: "Comma-separated bump types to allow (major,minor,patch)."
     required: false
     default: "minor,patch"
+  strategy:
+    description: "Update strategy: latest | in-range (in-range never crosses a major)."
+    required: false
+    default: "latest"
   limit:
     description: "Maximum number of PRs to open in one run."
     required: false
@@ -47,12 +51,13 @@ runs:
         INPUT_APPLY: ${{ inputs.apply }}
         INPUT_TYPES: ${{ inputs.types }}
         INPUT_LIMIT: ${{ inputs.limit }}
+        INPUT_STRATEGY: ${{ inputs.strategy }}
         INPUT_VERBOSE: ${{ inputs.verbose }}
       run: |
         # Inputs are passed through env (never interpolated into the script) to
         # avoid shell-injection — Converge is a security tool; it should model it.
         global=()
         [ "$INPUT_VERBOSE" = "true" ] && global+=(--verbose)
-        args=("$INPUT_REPOSITORY" --types "$INPUT_TYPES" --limit "$INPUT_LIMIT")
+        args=("$INPUT_REPOSITORY" --types "$INPUT_TYPES" --limit "$INPUT_LIMIT" --strategy "$INPUT_STRATEGY")
         [ "$INPUT_APPLY" = "true" ] && args+=(--apply)
         node "$GITHUB_ACTION_PATH/dist/cli.js" "${global[@]}" run "${args[@]}"

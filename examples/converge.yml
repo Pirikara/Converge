@@ -21,5 +21,6 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           apply: "true" # omit or set "false" for a dry-run
+          strategy: "latest" # or "in-range" to never cross a major
           types: "minor,patch" # add "major" to include breaking bumps
           limit: "10"

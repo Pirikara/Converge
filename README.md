@@ -126,7 +126,8 @@ Each PR body contains the F1/F2/F3/F4 report (resolution + co-bumps, safety verd
 usage map + risk, deprecation), and the commit includes the manifest **and** the
 regenerated lockfile.
 
-Options: `--apply`, `--token <t>`, `--types major,minor,patch`, `--limit <n>`, `-v`.
+Options: `--apply`, `--token <t>`, `--types major,minor,patch`, `--limit <n>`,
+`--strategy latest|in-range`, `-v`.
 
 ### Run as a GitHub Action (no server, no hosted app)
 
@@ -157,8 +158,8 @@ jobs:
 ```
 
 Inputs: `repository` (default: the current repo), `token` (required), `apply`, `types`,
-`limit`, `verbose`. The built-in `secrets.GITHUB_TOKEN` is enough for same-repo PRs;
-use a PAT to target another repository.
+`limit`, `strategy` (`latest`|`in-range`), `verbose`. The built-in `secrets.GITHUB_TOKEN`
+is enough for same-repo PRs; use a PAT to target another repository.
 
 ### `resolve` — resolve a single bump locally (no PR)
 
@@ -181,6 +182,11 @@ All 12 ecosystems are enabled by default; list one only to change it.
 
 ```json5
 {
+  // "latest" (default): bump to the registry's latest, replacing the range if
+  // needed (may cross a major). "in-range": only move up within the declared
+  // range — never crossing its major — so "^3.23.8" advances to "^3.25.76" but
+  // never "^4.x". (npm ecosystem; override per run with `--strategy`.)
+  "updateStrategy": "in-range",
   "ecosystems": {
     "npm":    { "enabled": true, "directories": ["frontend/"] },
     "docker": { "enabled": false }   // opt an ecosystem out

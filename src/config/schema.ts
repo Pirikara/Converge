@@ -85,6 +85,12 @@ export const ConfigSchema = z
       })
       .default({}),
     schedule: z.string().default("weekly"),
+    // How far to move a dependency (Converge's own vocabulary; independent of
+    // any other tool). "latest": bump to the registry's latest, replacing the
+    // range if needed (may cross a major). "in-range": only move up within the
+    // declared range — never crossing its major — so e.g. "^3.23.8" advances to
+    // "^3.25.76" but not "^4.x". Currently honoured by the npm ecosystem.
+    updateStrategy: z.enum(["latest", "in-range"]).default("latest"),
     safety: z
       .object({
         cooldownDays: z.number().int().min(0).default(3),

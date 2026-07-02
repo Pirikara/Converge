@@ -95,6 +95,8 @@ export interface RunOptions {
   token?: string;
   types?: string;
   limit?: string;
+  /** Override config `updateStrategy` ("latest" | "in-range"). */
+  strategy?: string;
 }
 
 const VALID_TYPES: UpdateType[] = ["major", "minor", "patch"];
@@ -400,7 +402,10 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
   const gh = new GitHubClient(resolveToken(opts.token));
 
   const base = await gh.getDefaultBranch(ref);
-  const config = await loadRepoConfig(gh, ref, base);
+  let config = await loadRepoConfig(gh, ref, base);
+  if (opts.strategy === "latest" || opts.strategy === "in-range") {
+    config = { ...config, updateStrategy: opts.strategy };
+  }
   const allow = parseTypes(opts.types);
   const limit = Math.max(1, Number(opts.limit ?? "5") || 5);
 

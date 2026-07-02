@@ -51,7 +51,7 @@ export async function selectCandidates(
 
   const ecosystems: { adapter: EcosystemAdapter; dirs: string[] }[] = [];
   if (config.ecosystems.npm.enabled) {
-    ecosystems.push({ adapter: new NpmAdapter(), dirs: config.ecosystems.npm.directories });
+    ecosystems.push({ adapter: new NpmAdapter(config.updateStrategy), dirs: config.ecosystems.npm.directories });
   }
   if (config.ecosystems.pip.enabled) {
     ecosystems.push({ adapter: new PipAdapter(), dirs: config.ecosystems.pip.directories });

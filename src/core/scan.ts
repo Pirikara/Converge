@@ -34,7 +34,7 @@ export async function scan(repoRootInput: string): Promise<ScanResult> {
 
   const enabled: { adapter: EcosystemAdapter; dirs: string[] }[] = [];
   if (config.ecosystems.npm.enabled) {
-    enabled.push({ adapter: new NpmAdapter(), dirs: config.ecosystems.npm.directories });
+    enabled.push({ adapter: new NpmAdapter(config.updateStrategy), dirs: config.ecosystems.npm.directories });
   }
   if (config.ecosystems.pip.enabled) {
     enabled.push({ adapter: new PipAdapter(), dirs: config.ecosystems.pip.directories });

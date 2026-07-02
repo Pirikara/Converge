@@ -19,5 +19,6 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           apply: "true"
+          strategy: "in-range" # stay within each dep's current major
           types: "minor,patch"
           limit: "10"
