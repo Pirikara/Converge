@@ -198,10 +198,13 @@ function sanitizeBranch(s: string): string {
 }
 
 /**
- * Create the stream PR, or refresh the existing one to the new target in place
- * (same branch) — so a dependency has one live PR that moves forward, never a
- * pile-up of one PR per version. When the title (which encodes the target) is
- * unchanged, nothing is rewritten.
+ * Create the stream PR, or refresh the existing one in place (same branch) so a
+ * dependency has one live PR that moves forward — never a pile-up per version.
+ * Refreshes when the target moved (title changed) OR the branch fell behind the
+ * base (another PR merged): the files are always re-resolved against the current
+ * base, so the re-commit rebases the branch and regenerates a clean lockfile —
+ * no textual lockfile merge, so no conflict. An unchanged, up-to-date PR is a
+ * no-op.
  */
 async function upsertPr(
   gh: GitHubClient,
@@ -210,19 +213,23 @@ async function upsertPr(
   spec: { branch: string; title: string; body: string; files: { path: string; content: string }[] },
 ): Promise<void> {
   const existing = await gh.findOpenPr(ref, spec.branch);
-  if (existing && existing.title === spec.title) {
-    process.stdout.write(`  up to date → PR #${existing.number} ${pc.dim("(no change)")}\n`);
+  if (existing) {
+    const behind = await gh.behindBy(ref, base, spec.branch);
+    if (existing.title === spec.title && behind === 0) {
+      process.stdout.write(`  up to date → PR #${existing.number} ${pc.dim("(no change)")}\n`);
+      return;
+    }
+    const baseSha = await gh.getBranchSha(ref, base);
+    await gh.commitFiles(ref, { branch: spec.branch, baseSha, message: spec.title, files: spec.files });
+    await gh.updatePr(ref, existing.number, { title: spec.title, body: spec.body });
+    const why = existing.title !== spec.title ? "new target" : "rebased onto base";
+    process.stdout.write(`  ${pc.yellow("refreshed")} PR #${existing.number} ${pc.dim(`(${why})`)}\n`);
     return;
   }
   const baseSha = await gh.getBranchSha(ref, base);
   await gh.commitFiles(ref, { branch: spec.branch, baseSha, message: spec.title, files: spec.files });
-  if (existing) {
-    await gh.updatePr(ref, existing.number, { title: spec.title, body: spec.body });
-    process.stdout.write(`  ${pc.yellow("refreshed")} PR #${existing.number} → ${spec.title}\n`);
-  } else {
-    const pr = await gh.createPr(ref, { head: spec.branch, base, title: spec.title, body: spec.body });
-    process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
-  }
+  const pr = await gh.createPr(ref, { head: spec.branch, base, title: spec.title, body: spec.body });
+  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
 }
 
 async function openPr(

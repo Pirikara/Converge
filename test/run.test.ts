@@ -17,6 +17,7 @@ vi.mock("../src/github/client.js", () => {
     commitFiles(...a: any[]) { return h.gh.commitFiles(...a); }
     createPr(...a: any[]) { return h.gh.createPr(...a); }
     updatePr(...a: any[]) { return h.gh.updatePr(...a); }
+    behindBy(...a: any[]) { return h.gh.behindBy(...a); }
   }
   return {
     GitHubClient,
@@ -60,6 +61,7 @@ function mkGh(files: Record<string, string>) {
     commitFiles: vi.fn(async () => undefined),
     createPr: vi.fn(async () => ({ number: 1, url: "https://github.com/o/r/pull/1" })),
     updatePr: vi.fn(async () => undefined),
+    behindBy: vi.fn(async () => 0),
   };
 }
 
@@ -168,6 +170,27 @@ describe("runRun — Maven (OSV-gated edit path)", () => {
     expect(h.gh.updatePr).toHaveBeenCalledTimes(1);
     expect(h.gh.updatePr.mock.calls[0][1]).toBe(7);
     expect(h.gh.updatePr.mock.calls[0][2].title).toContain("to 2.18.0");
+  });
+
+  it("rebases the stream PR when it fell behind base (same target)", async () => {
+    h.gh = mkGh({ "pom.xml": POM("com.fasterxml.jackson.core", "jackson-databind", "2.15.0") });
+    // open PR already at the right target, but its branch is behind base
+    h.gh.findOpenPr.mockResolvedValue({
+      number: 7,
+      title: "bump com.fasterxml.jackson.core:jackson-databind from 2.15.0 to 2.18.0",
+    });
+    h.gh.behindBy.mockResolvedValue(3); // 3 commits behind main (another PR merged)
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("api.osv.dev")) return jsonResp({ vulns: [] });
+      if (url.includes("maven-metadata")) return textResp(MAVEN_META);
+      return notFound;
+    });
+
+    await runRun("o/r", RUN_OPTS);
+    // re-committed on the current base + PR refreshed, no duplicate
+    expect(h.gh.createPr).not.toHaveBeenCalled();
+    expect(h.gh.commitFiles).toHaveBeenCalledTimes(1);
+    expect(h.gh.updatePr).toHaveBeenCalledTimes(1);
   });
 
   it("does not open a PR in dry-run mode", async () => {

@@ -296,4 +296,17 @@ export class GitHubClient {
       body: params.body,
     });
   }
+
+  /** How many commits `branch` is behind `base` (0 = up to date). */
+  async behindBy(ref: RepoRef, base: string, branch: string): Promise<number> {
+    try {
+      const { data } = await this.octokit.repos.compareCommitsWithBasehead({
+        ...ref,
+        basehead: `${base}...${branch}`,
+      });
+      return data.behind_by;
+    } catch {
+      return 0; // compare unavailable → don't force a needless rebase
+    }
+  }
 }
