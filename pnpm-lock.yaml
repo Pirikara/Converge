@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@octokit/rest':
-        specifier: ^21.0.2
+        specifier: ^21.1.1
         version: 21.1.1
       commander:
         specifier: ^12.1.0
