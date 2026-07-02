@@ -91,6 +91,11 @@ export const ConfigSchema = z
     // declared range — never crossing its major — so e.g. "^3.23.8" advances to
     // "^3.25.76" but not "^4.x". Currently honoured by the npm ecosystem.
     updateStrategy: z.enum(["latest", "in-range"]).default("latest"),
+    // How to keep open update PRs current when the base branch moves (Converge's
+    // own vocabulary). "conflicting": rebase only PRs that actually conflict with
+    // base; "behind": rebase any PR whose branch fell behind base; "never": don't
+    // auto-rebase. A PR a human has pushed extra commits to is never rebased.
+    rebase: z.enum(["conflicting", "behind", "never"]).default("conflicting"),
     safety: z
       .object({
         cooldownDays: z.number().int().min(0).default(3),

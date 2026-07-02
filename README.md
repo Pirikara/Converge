@@ -189,6 +189,10 @@ All 12 ecosystems are enabled by default; list one only to change it.
   // range — never crossing its major — so "^3.23.8" advances to "^3.25.76" but
   // never "^4.x". (npm ecosystem; override per run with `--strategy`.)
   "updateStrategy": "in-range",
+  // Keep open PRs current when the base branch moves. "conflicting" (default):
+  // rebase only PRs that actually conflict; "behind": rebase any PR behind base;
+  // "never": don't auto-rebase. PRs a human has pushed to are never rebased.
+  "rebase": "conflicting",
   "ecosystems": {
     "npm":    { "enabled": true, "directories": ["frontend/"] },
     "docker": { "enabled": false }   // opt an ecosystem out

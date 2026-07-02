@@ -17,7 +17,8 @@ vi.mock("../src/github/client.js", () => {
     commitFiles(...a: any[]) { return h.gh.commitFiles(...a); }
     createPr(...a: any[]) { return h.gh.createPr(...a); }
     updatePr(...a: any[]) { return h.gh.updatePr(...a); }
-    behindBy(...a: any[]) { return h.gh.behindBy(...a); }
+    compareBranch(...a: any[]) { return h.gh.compareBranch(...a); }
+    prConflicting(...a: any[]) { return h.gh.prConflicting(...a); }
   }
   return {
     GitHubClient,
@@ -61,7 +62,8 @@ function mkGh(files: Record<string, string>) {
     commitFiles: vi.fn(async () => undefined),
     createPr: vi.fn(async () => ({ number: 1, url: "https://github.com/o/r/pull/1" })),
     updatePr: vi.fn(async () => undefined),
-    behindBy: vi.fn(async () => 0),
+    compareBranch: vi.fn(async () => ({ ahead: 1, behind: 0 })),
+    prConflicting: vi.fn(async () => false),
   };
 }
 
@@ -172,14 +174,13 @@ describe("runRun — Maven (OSV-gated edit path)", () => {
     expect(h.gh.updatePr.mock.calls[0][2].title).toContain("to 2.18.0");
   });
 
-  it("rebases the stream PR when it fell behind base (same target)", async () => {
+  const SAME_TITLE = "bump com.fasterxml.jackson.core:jackson-databind from 2.15.0 to 2.18.0";
+
+  it("rebases a behind, conflicting PR (default rebase=conflicting)", async () => {
     h.gh = mkGh({ "pom.xml": POM("com.fasterxml.jackson.core", "jackson-databind", "2.15.0") });
-    // open PR already at the right target, but its branch is behind base
-    h.gh.findOpenPr.mockResolvedValue({
-      number: 7,
-      title: "bump com.fasterxml.jackson.core:jackson-databind from 2.15.0 to 2.18.0",
-    });
-    h.gh.behindBy.mockResolvedValue(3); // 3 commits behind main (another PR merged)
+    h.gh.findOpenPr.mockResolvedValue({ number: 7, title: SAME_TITLE });
+    h.gh.compareBranch.mockResolvedValue({ ahead: 1, behind: 3 }); // behind base
+    h.gh.prConflicting.mockResolvedValue(true); // and actually conflicts
     fetchMock.mockImplementation(async (url: string) => {
       if (url.includes("api.osv.dev")) return jsonResp({ vulns: [] });
       if (url.includes("maven-metadata")) return textResp(MAVEN_META);
@@ -187,10 +188,42 @@ describe("runRun — Maven (OSV-gated edit path)", () => {
     });
 
     await runRun("o/r", RUN_OPTS);
-    // re-committed on the current base + PR refreshed, no duplicate
     expect(h.gh.createPr).not.toHaveBeenCalled();
-    expect(h.gh.commitFiles).toHaveBeenCalledTimes(1);
+    expect(h.gh.commitFiles).toHaveBeenCalledTimes(1); // rebased in place
     expect(h.gh.updatePr).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a behind but non-conflicting PR alone (conflicting mode)", async () => {
+    h.gh = mkGh({ "pom.xml": POM("com.fasterxml.jackson.core", "jackson-databind", "2.15.0") });
+    h.gh.findOpenPr.mockResolvedValue({ number: 7, title: SAME_TITLE });
+    h.gh.compareBranch.mockResolvedValue({ ahead: 1, behind: 3 });
+    h.gh.prConflicting.mockResolvedValue(false); // behind, but no conflict
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("api.osv.dev")) return jsonResp({ vulns: [] });
+      if (url.includes("maven-metadata")) return textResp(MAVEN_META);
+      return notFound;
+    });
+
+    await runRun("o/r", RUN_OPTS);
+    expect(h.gh.commitFiles).not.toHaveBeenCalled();
+    expect(h.gh.updatePr).not.toHaveBeenCalled();
+  });
+
+  it("never clobbers a PR a human has pushed commits to", async () => {
+    h.gh = mkGh({ "pom.xml": POM("com.fasterxml.jackson.core", "jackson-databind", "2.15.0") });
+    h.gh.findOpenPr.mockResolvedValue({ number: 7, title: SAME_TITLE });
+    h.gh.compareBranch.mockResolvedValue({ ahead: 3, behind: 2 }); // extra human commits
+    h.gh.prConflicting.mockResolvedValue(true);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("api.osv.dev")) return jsonResp({ vulns: [] });
+      if (url.includes("maven-metadata")) return textResp(MAVEN_META);
+      return notFound;
+    });
+
+    await runRun("o/r", RUN_OPTS);
+    expect(h.gh.commitFiles).not.toHaveBeenCalled(); // left untouched
+    expect(h.gh.updatePr).not.toHaveBeenCalled();
+    expect(h.gh.createPr).not.toHaveBeenCalled();
   });
 
   it("does not open a PR in dry-run mode", async () => {

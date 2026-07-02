@@ -197,39 +197,68 @@ function sanitizeBranch(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+type RebaseMode = Config["rebase"];
+
+/** Should a stale (behind-base) PR be rebased, per the configured policy? */
+async function shouldRebase(
+  gh: GitHubClient,
+  ref: RepoRef,
+  mode: RebaseMode,
+  prNumber: number,
+  behind: number,
+): Promise<boolean> {
+  if (behind === 0 || mode === "never") return false;
+  if (mode === "behind") return true;
+  return gh.prConflicting(ref, prNumber); // "conflicting"
+}
+
 /**
  * Create the stream PR, or refresh the existing one in place (same branch) so a
  * dependency has one live PR that moves forward — never a pile-up per version.
- * Refreshes when the target moved (title changed) OR the branch fell behind the
- * base (another PR merged): the files are always re-resolved against the current
- * base, so the re-commit rebases the branch and regenerates a clean lockfile —
- * no textual lockfile merge, so no conflict. An unchanged, up-to-date PR is a
- * no-op.
+ *
+ * Refreshes when the target moved (title changed) or the branch fell behind base
+ * and the rebase policy says so. The files are always re-resolved against the
+ * current base, so a refresh rebases the branch and regenerates a clean lockfile
+ * (no textual merge → no conflict). A PR a human has pushed extra commits to
+ * (ahead of base by more than Converge's single commit) is left untouched.
  */
 async function upsertPr(
   gh: GitHubClient,
   ref: RepoRef,
   base: string,
+  rebase: RebaseMode,
   spec: { branch: string; title: string; body: string; files: { path: string; content: string }[] },
 ): Promise<void> {
   const existing = await gh.findOpenPr(ref, spec.branch);
-  if (existing) {
-    const behind = await gh.behindBy(ref, base, spec.branch);
-    if (existing.title === spec.title && behind === 0) {
-      process.stdout.write(`  up to date → PR #${existing.number} ${pc.dim("(no change)")}\n`);
-      return;
-    }
+  const write = async (): Promise<string> => {
     const baseSha = await gh.getBranchSha(ref, base);
     await gh.commitFiles(ref, { branch: spec.branch, baseSha, message: spec.title, files: spec.files });
-    await gh.updatePr(ref, existing.number, { title: spec.title, body: spec.body });
-    const why = existing.title !== spec.title ? "new target" : "rebased onto base";
-    process.stdout.write(`  ${pc.yellow("refreshed")} PR #${existing.number} ${pc.dim(`(${why})`)}\n`);
+    return baseSha;
+  };
+
+  if (!existing) {
+    await write();
+    const pr = await gh.createPr(ref, { head: spec.branch, base, title: spec.title, body: spec.body });
+    process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
     return;
   }
-  const baseSha = await gh.getBranchSha(ref, base);
-  await gh.commitFiles(ref, { branch: spec.branch, baseSha, message: spec.title, files: spec.files });
-  const pr = await gh.createPr(ref, { head: spec.branch, base, title: spec.title, body: spec.body });
-  process.stdout.write(`  ${pc.green("created")} PR #${pr.number} → ${pr.url}\n`);
+
+  const { ahead, behind } = await gh.compareBranch(ref, base, spec.branch);
+  if (ahead > 1) {
+    // A human pushed to the branch — never clobber their work.
+    process.stdout.write(`  ${pc.yellow("⚠ manual commits")} on PR #${existing.number} ${pc.dim("(left untouched)")}\n`);
+    return;
+  }
+  const targetChanged = existing.title !== spec.title;
+  const rebasing = await shouldRebase(gh, ref, rebase, existing.number, behind);
+  if (!targetChanged && !rebasing) {
+    process.stdout.write(`  up to date → PR #${existing.number} ${pc.dim("(no change)")}\n`);
+    return;
+  }
+  await write();
+  await gh.updatePr(ref, existing.number, { title: spec.title, body: spec.body });
+  const why = targetChanged ? "new target" : "rebased onto base";
+  process.stdout.write(`  ${pc.yellow("refreshed")} PR #${existing.number} ${pc.dim(`(${why})`)}\n`);
 }
 
 async function openPr(
@@ -241,8 +270,9 @@ async function openPr(
   impact: ImpactReport,
   deprecation: DeprecationFinding[],
   introduced: AuditFinding[],
+  rebase: RebaseMode,
 ): Promise<void> {
-  await upsertPr(gh, ref, base, {
+  await upsertPr(gh, ref, base, rebase, {
     branch: branchName(res.candidate),
     title: renderPrTitle(res.candidate, res),
     body: renderPrBody(res.candidate, res, safety, impact, deprecation, introduced),
@@ -250,9 +280,9 @@ async function openPr(
   });
 }
 
-async function openPrDocker(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution): Promise<void> {
+async function openPrDocker(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, rebase: RebaseMode): Promise<void> {
   const c = res.candidate;
-  await upsertPr(gh, ref, base, {
+  await upsertPr(gh, ref, base, rebase, {
     branch: branchName(c),
     title: `bump ${c.name} image from ${c.currentRange} to ${c.latestVersion}`,
     body: renderDockerPrBody(c),
@@ -260,9 +290,9 @@ async function openPrDocker(gh: GitHubClient, ref: RepoRef, base: string, res: C
   });
 }
 
-async function openPrNuget(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict): Promise<void> {
+async function openPrNuget(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict, rebase: RebaseMode): Promise<void> {
   const c = res.candidate;
-  await upsertPr(gh, ref, base, {
+  await upsertPr(gh, ref, base, rebase, {
     branch: branchName(c),
     title: `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`,
     body: renderNugetPrBody(c, safety),
@@ -270,9 +300,9 @@ async function openPrNuget(gh: GitHubClient, ref: RepoRef, base: string, res: Ca
   });
 }
 
-async function openPrMaven(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict): Promise<void> {
+async function openPrMaven(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict, rebase: RebaseMode): Promise<void> {
   const c = res.candidate;
-  await upsertPr(gh, ref, base, {
+  await upsertPr(gh, ref, base, rebase, {
     branch: branchName(c),
     title: `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`,
     body: renderMavenPrBody(c, safety),
@@ -280,10 +310,10 @@ async function openPrMaven(gh: GitHubClient, ref: RepoRef, base: string, res: Ca
   });
 }
 
-async function openPrComposer(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict): Promise<void> {
+async function openPrComposer(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict, rebase: RebaseMode): Promise<void> {
   const c = res.candidate;
   const to = c.writeRange ?? c.latestVersion;
-  await upsertPr(gh, ref, base, {
+  await upsertPr(gh, ref, base, rebase, {
     branch: branchName(c),
     title: `bump ${c.name} from ${c.currentRange} to ${to}`,
     body: renderComposerPrBody(c, safety),
@@ -291,9 +321,9 @@ async function openPrComposer(gh: GitHubClient, ref: RepoRef, base: string, res:
   });
 }
 
-async function openPrTerraform(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution): Promise<void> {
+async function openPrTerraform(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, rebase: RebaseMode): Promise<void> {
   const c = res.candidate;
-  await upsertPr(gh, ref, base, {
+  await upsertPr(gh, ref, base, rebase, {
     branch: branchName(c),
     title: `bump ${c.name} from ${c.currentRange} to ${c.latestVersion}`,
     body: renderTerraformPrBody(c),
@@ -301,9 +331,9 @@ async function openPrTerraform(gh: GitHubClient, ref: RepoRef, base: string, res
   });
 }
 
-async function openPrHelm(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution): Promise<void> {
+async function openPrHelm(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, rebase: RebaseMode): Promise<void> {
   const c = res.candidate;
-  await upsertPr(gh, ref, base, {
+  await upsertPr(gh, ref, base, rebase, {
     branch: branchName(c),
     title: `bump ${c.name} chart from ${c.currentRange} to ${c.latestVersion}`,
     body: renderHelmPrBody(c),
@@ -311,13 +341,13 @@ async function openPrHelm(gh: GitHubClient, ref: RepoRef, base: string, res: Can
   });
 }
 
-async function openPrActions(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict): Promise<void> {
+async function openPrActions(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict, rebase: RebaseMode): Promise<void> {
   const c = res.candidate;
   // The manifest dir (`.github/workflows`) can't seed a branch (a ref component
   // may not start with a dot), and the same action can appear in multiple
   // workflows — key on the workflow file stem + version-less stream id.
   const stem = sanitizeBranch((c.manifestPath.split("/").pop() ?? "").replace(/\.ya?ml$/i, ""));
-  await upsertPr(gh, ref, base, {
+  await upsertPr(gh, ref, base, rebase, {
     branch: `converge/github-actions/${stem}-${streamId(c)}`,
     title: `bump ${c.name} action from ${c.currentRange} to ${c.latestVersion}`,
     body: renderActionsPrBody(c, safety),
@@ -325,12 +355,12 @@ async function openPrActions(gh: GitHubClient, ref: RepoRef, base: string, res: 
   });
 }
 
-async function openPrGroup(gh: GitHubClient, ref: RepoRef, base: string, gres: GroupResolution, introduced: AuditFinding[]): Promise<void> {
+async function openPrGroup(gh: GitHubClient, ref: RepoRef, base: string, gres: GroupResolution, introduced: AuditFinding[], rebase: RebaseMode): Promise<void> {
   const c0 = gres.candidates[0]!;
   // Title encodes the members' targets so an unchanged group is a no-op while a
   // changed one refreshes the same PR.
   const summary = gres.changes.map((ch) => `${ch.name}@${ch.toRange}`).join(", ");
-  await upsertPr(gh, ref, base, {
+  await upsertPr(gh, ref, base, rebase, {
     branch: `converge/group/${sanitizeBranch(gres.groupName)}-${sanitizeBranch(c0.dir)}`,
     title: `group ${gres.groupName}: ${summary}`,
     body: renderGroupPrBody(gres.groupName, gres.changes, introduced),
@@ -507,7 +537,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
     resolved++;
     if (opts.apply) {
       try {
-        await openPrGroup(gh, ref, base, gres, introduced);
+        await openPrGroup(gh, ref, base, gres, introduced, config.rebase);
       } catch (err) {
         log.error(`group ${group.name}: ${(err as Error).message}`);
       }
@@ -532,7 +562,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       resolved++;
       if (opts.apply) {
         try {
-          await openPrDocker(gh, ref, base, res);
+          await openPrDocker(gh, ref, base, res, config.rebase);
         } catch (err) {
           log.error(`${candidate.name}: ${(err as Error).message}`);
         }
@@ -552,7 +582,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       resolved++;
       if (opts.apply) {
         try {
-          await openPrTerraform(gh, ref, base, res);
+          await openPrTerraform(gh, ref, base, res, config.rebase);
         } catch (err) {
           log.error(`${candidate.name}: ${(err as Error).message}`);
         }
@@ -572,7 +602,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       resolved++;
       if (opts.apply) {
         try {
-          await openPrHelm(gh, ref, base, res);
+          await openPrHelm(gh, ref, base, res, config.rebase);
         } catch (err) {
           log.error(`${candidate.name}: ${(err as Error).message}`);
         }
@@ -602,7 +632,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       resolved++;
       if (opts.apply) {
         try {
-          await openPrActions(gh, ref, base, res, verdict);
+          await openPrActions(gh, ref, base, res, verdict, config.rebase);
         } catch (err) {
           log.error(`${candidate.name}: ${(err as Error).message}`);
         }
@@ -632,7 +662,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       resolved++;
       if (opts.apply) {
         try {
-          await openPrNuget(gh, ref, base, res, verdict);
+          await openPrNuget(gh, ref, base, res, verdict, config.rebase);
         } catch (err) {
           log.error(`${candidate.name}: ${(err as Error).message}`);
         }
@@ -662,7 +692,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       resolved++;
       if (opts.apply) {
         try {
-          await openPrComposer(gh, ref, base, res, verdict);
+          await openPrComposer(gh, ref, base, res, verdict, config.rebase);
         } catch (err) {
           log.error(`${candidate.name}: ${(err as Error).message}`);
         }
@@ -692,7 +722,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       resolved++;
       if (opts.apply) {
         try {
-          await openPrMaven(gh, ref, base, res, verdict);
+          await openPrMaven(gh, ref, base, res, verdict, config.rebase);
         } catch (err) {
           log.error(`${candidate.name}: ${(err as Error).message}`);
         }
@@ -761,7 +791,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
 
     if (opts.apply) {
       try {
-        await openPr(gh, ref, base, res, verdict, impact, deprecation, introduced);
+        await openPr(gh, ref, base, res, verdict, impact, deprecation, introduced, config.rebase);
       } catch (err) {
         log.error(`${candidate.name}: ${(err as Error).message}`);
       }

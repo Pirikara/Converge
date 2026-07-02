@@ -297,16 +297,39 @@ export class GitHubClient {
     });
   }
 
-  /** How many commits `branch` is behind `base` (0 = up to date). */
-  async behindBy(ref: RepoRef, base: string, branch: string): Promise<number> {
+  /**
+   * How far `branch` is ahead of / behind `base`. `behind > 0` = base moved;
+   * `ahead > 1` = extra commits (a Converge branch is always exactly 1 ahead, so
+   * more means a human pushed to it).
+   */
+  async compareBranch(
+    ref: RepoRef,
+    base: string,
+    branch: string,
+  ): Promise<{ ahead: number; behind: number }> {
     try {
       const { data } = await this.octokit.repos.compareCommitsWithBasehead({
         ...ref,
         basehead: `${base}...${branch}`,
       });
-      return data.behind_by;
+      return { ahead: data.ahead_by, behind: data.behind_by };
     } catch {
-      return 0; // compare unavailable → don't force a needless rebase
+      return { ahead: 1, behind: 0 }; // compare unavailable → treat as own & current
     }
+  }
+
+  /**
+   * Whether a PR actually conflicts with its base. GitHub computes mergeability
+   * asynchronously, so retry a few times while it's `unknown`; if still unknown,
+   * report false (the next run will catch it once GitHub has computed it).
+   */
+  async prConflicting(ref: RepoRef, number: number): Promise<boolean> {
+    for (let i = 0; i < 3; i++) {
+      const { data } = await this.octokit.pulls.get({ ...ref, pull_number: number });
+      const state = data.mergeable_state;
+      if (state && state !== "unknown") return state === "dirty";
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    return false;
   }
 }
