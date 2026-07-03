@@ -130,4 +130,39 @@ describe("securityCandidates", () => {
     const gh = ghWith({ dependencies: { doomed: "1.0.0" } });
     expect(await securityCandidates(gh, ref, config, "main")).toHaveLength(0);
   });
+
+  it("fixes a Go module and queries OSV with the v-stripped version", async () => {
+    const gomod = "module x\ngo 1.21\nrequire github.com/x/y v1.0.0\n";
+    const gh = {
+      findManifestPaths: vi.fn(async (_r: unknown, _b: string, f: string) => (f === "go.mod" ? ["go.mod"] : [])),
+      findManifestPathsMatching: vi.fn(async () => []),
+      getFile: vi.fn(async (_r: unknown, p: string) => (p === "go.mod" ? { content: gomod, sha: "s" } : null)),
+    } as unknown as GitHubClient;
+
+    const osvVersions: string[] = []; // capture what form OSV was queried with
+    const goVuln: Record<string, string[]> = { "1.0.0": ["GHSA-go-1"] }; // v-stripped keys
+    fetchMock.mockImplementation(async (url: unknown, init?: { body?: string }) => {
+      if (typeof url !== "string") return notFound;
+      if (url.endsWith("/@latest")) return jsonResp({ Version: "v1.2.0" });
+      if (url.endsWith("/@v/list")) return { ok: true, status: 200, json: async () => ({}), text: async () => "v1.0.0\nv1.1.0\nv1.2.0" };
+      if (url.includes("/v1/querybatch")) {
+        const { queries } = JSON.parse(init!.body!) as { queries: { version: string }[] };
+        return jsonResp({ results: queries.map((q) => ({ vulns: (goVuln[q.version] ?? []).map((id) => ({ id })) })) });
+      }
+      if (url.includes("/v1/query")) {
+        const { version } = JSON.parse(init!.body!) as { version: string };
+        osvVersions.push(version);
+        return jsonResp({ vulns: (goVuln[version] ?? []).map((id) => ({ id, database_specific: { severity: "HIGH" } })) });
+      }
+      return notFound;
+    });
+
+    const out = await securityCandidates(gh, ref, config, "main");
+    expect(out).toHaveLength(1);
+    // native (v-prefixed) versions on the candidate…
+    expect(out[0]).toMatchObject({ ecosystem: "gomod", currentVersion: "v1.0.0", latestVersion: "v1.1.0" });
+    // …but OSV was always queried without the leading `v`.
+    expect(osvVersions.every((v) => !v.startsWith("v"))).toBe(true);
+    expect(osvVersions).toContain("1.0.0");
+  });
 });

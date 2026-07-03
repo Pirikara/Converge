@@ -236,6 +236,15 @@ Evaluated **before** resolution, so dangerous versions are never installed:
   it, that's treated as suspicious (possible hijacked publish).
 - **Allowlist** — explicit `pkg@version` entries override the gate.
 
+### Security remediation (fix, not just block)
+
+Beyond blocking bad *targets*, Converge opens PRs to **fix a vulnerable version you
+already have**: for each direct dependency whose *installed* version (read from the
+lockfile, not just the manifest range) is affected by an OSV advisory, it bumps to the
+fixed version — bypassing the update-type filter, the cooldown, and the `schedule`
+window. Covers **npm, pip, Go, Cargo, RubyGems** (`security.strategy`: `lowest` (default)
+| `highest`). Direct dependencies only; transitive vulns are surfaced by `audit`.
+
 ---
 
 ## Status & limitations

@@ -9,6 +9,12 @@ import { NpmAdapter } from "../adapters/npm/index.js";
 import { fetchPackageMeta } from "../adapters/npm/registry.js";
 import { PipAdapter } from "../adapters/pip/index.js";
 import { fetchPyPiMeta } from "../adapters/pip/pypi.js";
+import { GoAdapter } from "../adapters/gomod/index.js";
+import { fetchGoMeta } from "../adapters/gomod/proxy.js";
+import { CargoAdapter } from "../adapters/cargo/index.js";
+import { fetchCrateMeta } from "../adapters/cargo/cratesio.js";
+import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
+import { fetchGemMeta } from "../adapters/rubygems/rubygems.js";
 import type { PackageMeta } from "../adapters/types.js";
 import { log } from "../logger.js";
 
@@ -24,6 +30,8 @@ interface EcoProbe {
   fetchMeta: (name: string) => Promise<PackageMeta>;
   /** Lockfile basenames to consult for the *actually installed* version. */
   lockfiles: string[];
+  /** Transform a native version to the form OSV indexes (e.g. Go strips `v`). */
+  osvVersion?: (v: string) => string;
   /** Resolve the concrete current version from a manifest range, or null. */
   currentVersion: (range: string, versions: string[], ver: Versioning) => string | null;
 }
@@ -49,6 +57,35 @@ const PROBES: EcoProbe[] = [
     lockfiles: [],
     currentVersion: (range) => /^\s*==\s*([^\s,;#]+)\s*$/.exec(range)?.[1] ?? null,
     fetchMeta: fetchPyPiMeta,
+  },
+  {
+    ecosystem: "gomod",
+    osv: "Go",
+    scheme: "go",
+    makeAdapter: () => new GoAdapter(),
+    fetchMeta: fetchGoMeta,
+    // go.mod pins an exact version per direct module; OSV indexes it without `v`.
+    lockfiles: [],
+    osvVersion: (v) => v.replace(/^v/, ""),
+    currentVersion: (range, _versions, ver) => (ver.isValid(range) ? range : null),
+  },
+  {
+    ecosystem: "cargo",
+    osv: "crates.io",
+    scheme: "semver",
+    makeAdapter: () => new CargoAdapter(),
+    fetchMeta: fetchCrateMeta,
+    lockfiles: ["Cargo.lock"],
+    currentVersion: (range, versions, ver) => ver.maxSatisfying(versions, range),
+  },
+  {
+    ecosystem: "rubygems",
+    osv: "RubyGems",
+    scheme: "gem",
+    makeAdapter: () => new RubyGemsAdapter(),
+    fetchMeta: fetchGemMeta,
+    lockfiles: ["Gemfile.lock"],
+    currentVersion: (range, versions, ver) => ver.maxSatisfying(versions, range),
   },
 ];
 
@@ -94,12 +131,17 @@ async function findFixedVersion(
   if (strategy === "highest") candidates.reverse();
 
   for (const v of candidates) {
-    const vulns = await queryOsv(probe.osv, name, v);
+    const vulns = await queryOsv(probe.osv, name, osvForm(probe, v));
     if (!idSet(vulns).size || ![...idSet(vulns)].some((id) => vulnIds.has(id))) {
       return v; // none of the current advisories affect this version
     }
   }
   return null;
+}
+
+/** Version string in the form OSV indexes it. */
+function osvForm(probe: EcoProbe, v: string): string {
+  return probe.osvVersion ? probe.osvVersion(v) : v;
 }
 
 /** Map package name → versions present in the manifest dir's lockfile (if any). */
@@ -186,11 +228,11 @@ export async function securityCandidates(
       );
       if (resolved.length === 0) continue;
 
-      const screen = await queryOsvBatch(probe.osv, resolved.map((r) => ({ name: r.name, version: r.current })));
+      const screen = await queryOsvBatch(probe.osv, resolved.map((r) => ({ name: r.name, version: osvForm(probe, r.current) })));
       for (let i = 0; i < resolved.length; i++) {
         if ((screen[i]?.length ?? 0) === 0) continue; // not vulnerable
         const r = resolved[i]!;
-        const vulns = await queryOsv(probe.osv, r.name, r.current);
+        const vulns = await queryOsv(probe.osv, r.name, osvForm(probe, r.current));
         if (vulns.length === 0) continue;
         const versions = (await probe.fetchMeta(r.name).catch(() => null))?.versions ?? [];
         const fix = await findFixedVersion(probe, r.name, r.current, versions, idSet(vulns), ver, config.security.strategy);
