@@ -3,6 +3,7 @@ import { GitHubClient, type RepoRef } from "../github/client.js";
 import type { Config } from "../config/schema.js";
 import type { EcosystemAdapter, EcosystemId, UpdateCandidate } from "../adapters/types.js";
 import { getVersioning, type Versioning } from "../versioning/index.js";
+import { parseLockfile } from "../audit/lockfiles.js";
 import { queryOsv, queryOsvBatch, type OsvVuln } from "../safety/osv.js";
 import { NpmAdapter } from "../adapters/npm/index.js";
 import { fetchPackageMeta } from "../adapters/npm/registry.js";
@@ -21,6 +22,8 @@ interface EcoProbe {
   scheme: string;
   makeAdapter: () => EcosystemAdapter;
   fetchMeta: (name: string) => Promise<PackageMeta>;
+  /** Lockfile basenames to consult for the *actually installed* version. */
+  lockfiles: string[];
   /** Resolve the concrete current version from a manifest range, or null. */
   currentVersion: (range: string, versions: string[], ver: Versioning) => string | null;
 }
@@ -32,6 +35,9 @@ const PROBES: EcoProbe[] = [
     scheme: "semver",
     makeAdapter: () => new NpmAdapter(),
     fetchMeta: fetchPackageMeta,
+    // Prefer the locked version; the manifest range floats to a top that's
+    // usually already patched, hiding a lagging lockfile.
+    lockfiles: ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"],
     currentVersion: (range, versions, ver) => ver.maxSatisfying(versions, range),
   },
   {
@@ -39,7 +45,8 @@ const PROBES: EcoProbe[] = [
     osv: "PyPI",
     scheme: "pep440",
     makeAdapter: () => new PipAdapter(),
-    // requirements.txt pins look like `==1.2.3`; only exact pins are actionable.
+    // requirements.txt `==` pins already are the installed version — no lockfile.
+    lockfiles: [],
     currentVersion: (range) => /^\s*==\s*([^\s,;#]+)\s*$/.exec(range)?.[1] ?? null,
     fetchMeta: fetchPyPiMeta,
   },
@@ -95,6 +102,31 @@ async function findFixedVersion(
   return null;
 }
 
+/** Map package name → versions present in the manifest dir's lockfile (if any). */
+async function lockedVersions(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  dir: string,
+  probe: EcoProbe,
+): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  const prefix = dir === "." ? "" : `${dir}/`;
+  for (const name of probe.lockfiles) {
+    const file = await gh.getFile(ref, `${prefix}${name}`, base);
+    if (!file) continue;
+    const parsed = parseLockfile(name, file.content);
+    if (!parsed) continue;
+    for (const p of parsed.packages) {
+      const arr = map.get(p.name) ?? [];
+      arr.push(p.version);
+      map.set(p.name, arr);
+    }
+    break; // first lockfile found wins
+  }
+  return map;
+}
+
 /** Discover manifest paths for a probe's adapter on the base branch. */
 async function manifestPaths(gh: GitHubClient, ref: RepoRef, base: string, adapter: EcosystemAdapter): Promise<string[]> {
   if (adapter.manifestMatch) return gh.findManifestPathsMatching(ref, base, adapter.manifestMatch.bind(adapter));
@@ -133,14 +165,19 @@ export async function securityCandidates(
         continue;
       }
       const dir = path.posix.dirname(mPath) === "." ? "." : path.posix.dirname(mPath);
+      const locked = await lockedVersions(gh, ref, base, dir, probe);
 
-      // Resolve each dep's current version, then batch-screen against OSV.
+      // Resolve each dep's *installed* version (locked when available, else the
+      // manifest-range top), then batch-screen against OSV.
       const resolved: { name: string; range: string; kind: UpdateCandidate["kind"]; current: string }[] = [];
       await Promise.all(
         deps.map(async (dep) => {
           try {
             const meta = await probe.fetchMeta(dep.name);
-            const current = probe.currentVersion(dep.range, meta.versions, ver);
+            const inLock = locked.get(dep.name);
+            const current =
+              (inLock && ver.maxSatisfying(inLock, dep.range)) ??
+              probe.currentVersion(dep.range, meta.versions, ver);
             if (current && ver.isValid(current)) resolved.push({ name: dep.name, range: dep.range, kind: dep.kind, current });
           } catch {
             /* unknown package / registry error → skip */

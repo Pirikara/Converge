@@ -20,17 +20,27 @@ function npmPackument(name: string, versions: string[], latest: string) {
   });
 }
 
-/** gh fake that serves one package.json at the repo root. */
-function ghWith(pkgJson: object): GitHubClient {
+/** gh fake serving a package.json (+ optional extra files like a lockfile). */
+function ghWith(pkgJson: object, extra: Record<string, string> = {}): GitHubClient {
+  const files: Record<string, string> = { "package.json": JSON.stringify(pkgJson), ...extra };
   return {
     findManifestPaths: vi.fn(async (_ref: unknown, _base: string, filename: string) =>
       filename === "package.json" ? ["package.json"] : [],
     ),
     findManifestPathsMatching: vi.fn(async () => []),
     getFile: vi.fn(async (_ref: unknown, p: string) =>
-      p === "package.json" ? { content: JSON.stringify(pkgJson), sha: "s" } : null,
+      files[p] != null ? { content: files[p], sha: "s" } : null,
     ),
   } as unknown as GitHubClient;
+}
+
+function npmLock(pkgVersions: Record<string, string>) {
+  return JSON.stringify({
+    lockfileVersion: 3,
+    packages: Object.fromEntries(
+      Object.entries(pkgVersions).map(([n, v]) => [`node_modules/${n}`, { version: v }]),
+    ),
+  });
 }
 
 const config = ConfigSchema.parse({});
@@ -73,6 +83,25 @@ describe("securityCandidates", () => {
       latestVersion: "1.0.1", // lowest fixed (strategy default)
       security: { ids: ["GHSA-xxxx-yyyy-zzzz"], severity: "high" },
     });
+  });
+
+  it("uses the LOCKED version, not the range top (catches a lagging lockfile)", async () => {
+    // range floats to a patched 4.20.0, but the lockfile is stuck on vulnerable 4.17.1.
+    routeOsv("weblib", ["4.17.1", "4.18.0", "4.20.0"], "4.20.0", { "4.17.1": ["CVE-2024-9999"] });
+    const gh = ghWith(
+      { dependencies: { weblib: "^4.17.0" } },
+      { "package-lock.json": npmLock({ weblib: "4.17.1" }) },
+    );
+    const out = await securityCandidates(gh, ref, config, "main");
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ currentVersion: "4.17.1", latestVersion: "4.18.0" });
+  });
+
+  it("without a lockfile, a range that floats to a patched top is not flagged", async () => {
+    // same advisory, but no lockfile → current = maxSatisfying = 4.20.0 (clean).
+    routeOsv("weblib2", ["4.17.1", "4.20.0"], "4.20.0", { "4.17.1": ["CVE-2024-9999"] });
+    const gh = ghWith({ dependencies: { weblib2: "^4.17.0" } });
+    expect(await securityCandidates(gh, ref, config, "main")).toHaveLength(0);
   });
 
   it("targets the highest fixed version under strategy=highest", async () => {
