@@ -226,6 +226,50 @@ describe("runRun — Maven (OSV-gated edit path)", () => {
     expect(h.gh.createPr).not.toHaveBeenCalled();
   });
 
+  it("security-only mode skips routine updates", async () => {
+    // maven has a routine minor update available, but security-only skips it
+    // (and maven isn't in the security-fix probes) → no PR.
+    h.gh = mkGh({ "pom.xml": POM("com.fasterxml.jackson.core", "jackson-databind", "2.15.0") });
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("api.osv.dev")) return jsonResp({ vulns: [] });
+      if (url.includes("maven-metadata")) return textResp(MAVEN_META);
+      return notFound;
+    });
+
+    const code = await runRun("o/r", { ...RUN_OPTS, securityOnly: true });
+    expect(code).toBe(0);
+    expect(h.gh.createPr).not.toHaveBeenCalled();
+  });
+
+  it("gates routine updates by the schedule window (security still runs)", async () => {
+    // converge.json restricts routine to Mondays; jackson has a routine minor.
+    const files = {
+      "pom.xml": POM("com.fasterxml.jackson.core", "jackson-databind", "2.15.0"),
+      "converge.json": JSON.stringify({ schedule: { days: ["mon"] } }),
+    };
+    const osv = async (url: string) =>
+      url.includes("api.osv.dev") ? jsonResp({ vulns: [] }) : url.includes("maven-metadata") ? textResp(MAVEN_META) : notFound;
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      // Tuesday → outside the window → no routine PR
+      vi.setSystemTime(new Date("2026-07-07T09:00:00Z"));
+      h.gh = mkGh(files);
+      fetchMock.mockImplementation(osv);
+      await runRun("o/r", RUN_OPTS);
+      expect(h.gh.createPr).not.toHaveBeenCalled();
+
+      // Monday → inside the window → routine PR opens
+      vi.setSystemTime(new Date("2026-07-06T09:00:00Z"));
+      h.gh = mkGh(files);
+      fetchMock.mockImplementation(osv);
+      await runRun("o/r", RUN_OPTS);
+      expect(h.gh.createPr).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not open a PR in dry-run mode", async () => {
     h.gh = mkGh({ "pom.xml": POM("com.fasterxml.jackson.core", "jackson-databind", "2.15.0") });
     fetchMock.mockImplementation(async (url: string) => {

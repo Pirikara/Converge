@@ -11,6 +11,7 @@ import { selectCandidates, branchName, streamId, type UpdateType } from "../core
 import { resolveCandidate, resolveGroup, type CandidateResolution, type GroupResolution } from "../core/apply.js";
 import { partitionGroups } from "../core/groups.js";
 import { securityCandidates } from "../core/security.js";
+import { isRoutineAllowed } from "../core/schedule.js";
 import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody, renderActionsPrBody, renderTerraformPrBody, renderNugetPrBody, renderComposerPrBody, renderHelmPrBody, renderMavenPrBody } from "../core/pr-body.js";
 import { evaluateSafety } from "../safety/gate.js";
 import { provenanceStatus } from "../safety/provenance.js";
@@ -98,6 +99,8 @@ export interface RunOptions {
   limit?: string;
   /** Override config `updateStrategy` ("latest" | "in-range"). */
   strategy?: string;
+  /** Only remediate vulnerabilities; skip routine version updates. */
+  securityOnly?: boolean;
 }
 
 const VALID_TYPES: UpdateType[] = ["major", "minor", "patch"];
@@ -380,13 +383,19 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
   }
   const allow = parseTypes(opts.types);
   const limit = Math.max(1, Number(opts.limit ?? "5") || 5);
+  // Routine updates run only outside `--security-only` and within the configured
+  // schedule window; security fixes always run. So a single frequent workflow
+  // keeps vulnerabilities fresh while routine PRs land only in their window.
+  const routineAllowed = opts.securityOnly !== true && isRoutineAllowed(new Date(), config.schedule);
 
   log.info(
-    `${ref.owner}/${ref.repo} — proposing [${allow.join(", ")}] updates ` +
+    `${ref.owner}/${ref.repo} — ${routineAllowed ? `proposing [${allow.join(", ")}] updates` : pc.red("security fixes only")} ` +
       `(limit ${limit}, ${opts.apply ? pc.red("APPLY") : pc.cyan("dry-run")})`,
   );
 
-  const { selected } = await selectCandidates(gh, ref, config, { allow, limit });
+  const { selected } = routineAllowed
+    ? await selectCandidates(gh, ref, config, { allow, limit })
+    : { selected: [] as UpdateCandidate[] };
 
   // Security remediation (F2.2): a direct dep whose *current* version is
   // vulnerable gets a fix candidate regardless of the type filter — and it

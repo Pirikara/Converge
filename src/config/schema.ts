@@ -84,7 +84,19 @@ export const ConfigSchema = z
           .default({}),
       })
       .default({}),
-    schedule: z.string().default("weekly"),
+    // Time window (UTC) during which *routine* updates may open PRs — Converge's
+    // own structured format (independent of any other tool). `days` limits to
+    // weekdays, `hours` to an [start, end) hour range (wraps past midnight when
+    // start > end). Empty = any time. Security fixes ignore this entirely.
+    schedule: z
+      .object({
+        days: z.array(z.enum(["sun", "mon", "tue", "wed", "thu", "fri", "sat"])).default([]),
+        hours: z
+          .tuple([z.number().int().min(0).max(23), z.number().int().min(0).max(24)])
+          .nullable()
+          .default(null),
+      })
+      .default({}),
     // How far to move a dependency (Converge's own vocabulary; independent of
     // any other tool). "latest": bump to the registry's latest, replacing the
     // range if needed (may cross a major). "in-range": only move up within the

@@ -40,6 +40,7 @@ program
   .option("--types <list>", "comma-separated bump types to allow", "minor,patch")
   .option("--limit <n>", "max PRs to plan in one run", "5")
   .option("--strategy <s>", "update strategy: latest | in-range (overrides config)")
+  .option("--security-only", "only remediate vulnerabilities; skip routine updates", false)
   .action(async (repo: string, opts: Record<string, string | boolean>) => {
     if (program.opts().verbose) setLogLevel("debug");
     const code = await runRun(repo, {
@@ -48,6 +49,7 @@ program
       types: opts.types as string,
       limit: opts.limit as string,
       strategy: opts.strategy as string | undefined,
+      securityOnly: opts.securityOnly as boolean,
     });
     process.exitCode = code;
   });

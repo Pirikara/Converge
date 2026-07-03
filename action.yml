@@ -25,6 +25,10 @@ inputs:
     description: "Update strategy: latest | in-range (in-range never crosses a major)."
     required: false
     default: "latest"
+  security-only:
+    description: "Only remediate vulnerabilities; skip routine updates (for a high-frequency job)."
+    required: false
+    default: "false"
   limit:
     description: "Maximum number of PRs to open in one run."
     required: false
@@ -52,6 +56,7 @@ runs:
         INPUT_TYPES: ${{ inputs.types }}
         INPUT_LIMIT: ${{ inputs.limit }}
         INPUT_STRATEGY: ${{ inputs.strategy }}
+        INPUT_SECURITY_ONLY: ${{ inputs.security-only }}
         INPUT_VERBOSE: ${{ inputs.verbose }}
       run: |
         # Inputs are passed through env (never interpolated into the script) to
@@ -60,4 +65,5 @@ runs:
         [ "$INPUT_VERBOSE" = "true" ] && global+=(--verbose)
         args=("$INPUT_REPOSITORY" --types "$INPUT_TYPES" --limit "$INPUT_LIMIT" --strategy "$INPUT_STRATEGY")
         [ "$INPUT_APPLY" = "true" ] && args+=(--apply)
+        [ "$INPUT_SECURITY_ONLY" = "true" ] && args+=(--security-only)
         node "$GITHUB_ACTION_PATH/dist/cli.js" "${global[@]}" run "${args[@]}"

@@ -160,8 +160,14 @@ jobs:
 ```
 
 Inputs: `repository` (default: the current repo), `token` (required), `apply`, `types`,
-`limit`, `strategy` (`latest`|`in-range`), `verbose`. The built-in `secrets.GITHUB_TOKEN`
-is enough for same-repo PRs; use a PAT to target another repository.
+`limit`, `strategy` (`latest`|`in-range`), `security-only`, `verbose`. The built-in
+`secrets.GITHUB_TOKEN` is enough for same-repo PRs; use a PAT to target another repository.
+
+**One workflow, run frequently.** Converge has no event-driven trigger, so freshness
+follows your cron. Run it **daily (or hourly)** and control cadence in `converge.json`:
+security fixes are proposed on **every run**, while routine updates only open PRs inside
+the `schedule` window (below). No need to split into multiple workflows. (`--security-only`
+/ the `security-only` input still exists for an ad-hoc "just fix vulnerabilities now" run.)
 
 ### `resolve` — resolve a single bump locally (no PR)
 
@@ -193,6 +199,10 @@ All 12 ecosystems are enabled by default; list one only to change it.
   // rebase only PRs that actually conflict; "behind": rebase any PR behind base;
   // "never": don't auto-rebase. PRs a human has pushed to are never rebased.
   "rebase": "conflicting",
+  // Window (UTC) when *routine* updates may open PRs — run the workflow often and
+  // let this gate routine cadence. Security fixes ignore it (always proposed).
+  // Empty (default) = any time. Example: only Monday mornings.
+  "schedule": { "days": ["mon"], "hours": [6, 10] },
   "ecosystems": {
     "npm":    { "enabled": true, "directories": ["frontend/"] },
     "docker": { "enabled": false }   // opt an ecosystem out

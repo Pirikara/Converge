@@ -1,12 +1,14 @@
 # Copy this into YOUR repository at .github/workflows/converge.yml
-# It runs Converge on a schedule and opens dependency-update PRs — no server,
-# no hosted app; it runs on GitHub's own CI runners.
+# One workflow, run frequently: security fixes are proposed on every run, while
+# routine updates only open PRs inside the `schedule` window you set in
+# converge.json (e.g. { "schedule": { "days": ["mon"] } }). No server, no hosted
+# app — it runs on GitHub's own CI runners.
 
 name: Converge
 
 on:
   schedule:
-    - cron: "0 6 * * 1" # every Monday 06:00 UTC
+    - cron: "0 7 * * *" # daily 07:00 UTC (routine still gated by converge.json)
   workflow_dispatch: {} # allow manual runs from the Actions tab
 
 permissions:
