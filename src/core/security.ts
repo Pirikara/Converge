@@ -1,0 +1,180 @@
+import path from "node:path";
+import { GitHubClient, type RepoRef } from "../github/client.js";
+import type { Config } from "../config/schema.js";
+import type { EcosystemAdapter, EcosystemId, UpdateCandidate } from "../adapters/types.js";
+import { getVersioning, type Versioning } from "../versioning/index.js";
+import { queryOsv, queryOsvBatch, type OsvVuln } from "../safety/osv.js";
+import { NpmAdapter } from "../adapters/npm/index.js";
+import { fetchPackageMeta } from "../adapters/npm/registry.js";
+import { PipAdapter } from "../adapters/pip/index.js";
+import { fetchPyPiMeta } from "../adapters/pip/pypi.js";
+import type { PackageMeta } from "../adapters/types.js";
+import { log } from "../logger.js";
+
+/**
+ * How to probe one ecosystem for vulnerable *direct* dependencies. v1 covers npm
+ * and pip; the shape generalises to the other OSV-indexed ecosystems later.
+ */
+interface EcoProbe {
+  ecosystem: EcosystemId;
+  osv: string;
+  scheme: string;
+  makeAdapter: () => EcosystemAdapter;
+  fetchMeta: (name: string) => Promise<PackageMeta>;
+  /** Resolve the concrete current version from a manifest range, or null. */
+  currentVersion: (range: string, versions: string[], ver: Versioning) => string | null;
+}
+
+const PROBES: EcoProbe[] = [
+  {
+    ecosystem: "npm",
+    osv: "npm",
+    scheme: "semver",
+    makeAdapter: () => new NpmAdapter(),
+    fetchMeta: fetchPackageMeta,
+    currentVersion: (range, versions, ver) => ver.maxSatisfying(versions, range),
+  },
+  {
+    ecosystem: "pip",
+    osv: "PyPI",
+    scheme: "pep440",
+    makeAdapter: () => new PipAdapter(),
+    // requirements.txt pins look like `==1.2.3`; only exact pins are actionable.
+    currentVersion: (range) => /^\s*==\s*([^\s,;#]+)\s*$/.exec(range)?.[1] ?? null,
+    fetchMeta: fetchPyPiMeta,
+  },
+];
+
+const SEVERITY_RANK: Record<string, number> = {
+  info: 0,
+  low: 1,
+  moderate: 2,
+  high: 3,
+  critical: 4,
+};
+
+function topSeverity(vulns: OsvVuln[]): string {
+  return vulns.reduce((worst, v) => ((SEVERITY_RANK[v.severity] ?? 0) > (SEVERITY_RANK[worst] ?? 0) ? v.severity : worst), "info");
+}
+
+/** All ids (incl. aliases) that identify the vulnerabilities affecting a version. */
+function idSet(vulns: OsvVuln[]): Set<string> {
+  const s = new Set<string>();
+  for (const v of vulns) {
+    s.add(v.id);
+    for (const a of v.aliases) s.add(a);
+  }
+  return s;
+}
+
+/**
+ * Find the version that fixes the current vulnerabilities: the earliest
+ * ("lowest") or latest ("highest") published stable version above `current`
+ * that is not affected by any of `vulnIds`. Scans via OSV (cached).
+ */
+async function findFixedVersion(
+  probe: EcoProbe,
+  name: string,
+  current: string,
+  versions: string[],
+  vulnIds: Set<string>,
+  ver: Versioning,
+  strategy: "lowest" | "highest",
+): Promise<string | null> {
+  const candidates = versions
+    .filter((v) => ver.isValid(v) && ver.isStable(v) && ver.isGreaterThan(v, current))
+    .sort((a, b) => ver.compare(a, b));
+  if (strategy === "highest") candidates.reverse();
+
+  for (const v of candidates) {
+    const vulns = await queryOsv(probe.osv, name, v);
+    if (!idSet(vulns).size || ![...idSet(vulns)].some((id) => vulnIds.has(id))) {
+      return v; // none of the current advisories affect this version
+    }
+  }
+  return null;
+}
+
+/** Discover manifest paths for a probe's adapter on the base branch. */
+async function manifestPaths(gh: GitHubClient, ref: RepoRef, base: string, adapter: EcosystemAdapter): Promise<string[]> {
+  if (adapter.manifestMatch) return gh.findManifestPathsMatching(ref, base, adapter.manifestMatch.bind(adapter));
+  const lists = await Promise.all(adapter.manifestFilenames.map((f) => gh.findManifestPaths(ref, base, f)));
+  return lists.flat();
+}
+
+/**
+ * Build security-remediation candidates: for each direct dependency whose
+ * *current* version is affected by a known vulnerability (OSV), a candidate that
+ * bumps it to the fixed version. Direct dependencies only (v1). OSV-indexed
+ * ecosystems npm and pip.
+ */
+export async function securityCandidates(
+  gh: GitHubClient,
+  ref: RepoRef,
+  config: Config,
+  base: string,
+): Promise<UpdateCandidate[]> {
+  if (!config.security.enabled) return [];
+  const out: UpdateCandidate[] = [];
+
+  for (const probe of PROBES) {
+    if (!(config.ecosystems[probe.ecosystem]?.enabled ?? false)) continue;
+    const ver = getVersioning(probe.scheme);
+    const adapter = probe.makeAdapter();
+    const paths = await manifestPaths(gh, ref, base, adapter);
+
+    for (const mPath of paths) {
+      const file = await gh.getFile(ref, mPath, base);
+      if (!file) continue;
+      let deps;
+      try {
+        deps = adapter.parseManifestContent(file.content, mPath, "").dependencies;
+      } catch {
+        continue;
+      }
+      const dir = path.posix.dirname(mPath) === "." ? "." : path.posix.dirname(mPath);
+
+      // Resolve each dep's current version, then batch-screen against OSV.
+      const resolved: { name: string; range: string; kind: UpdateCandidate["kind"]; current: string }[] = [];
+      await Promise.all(
+        deps.map(async (dep) => {
+          try {
+            const meta = await probe.fetchMeta(dep.name);
+            const current = probe.currentVersion(dep.range, meta.versions, ver);
+            if (current && ver.isValid(current)) resolved.push({ name: dep.name, range: dep.range, kind: dep.kind, current });
+          } catch {
+            /* unknown package / registry error → skip */
+          }
+        }),
+      );
+      if (resolved.length === 0) continue;
+
+      const screen = await queryOsvBatch(probe.osv, resolved.map((r) => ({ name: r.name, version: r.current })));
+      for (let i = 0; i < resolved.length; i++) {
+        if ((screen[i]?.length ?? 0) === 0) continue; // not vulnerable
+        const r = resolved[i]!;
+        const vulns = await queryOsv(probe.osv, r.name, r.current);
+        if (vulns.length === 0) continue;
+        const versions = (await probe.fetchMeta(r.name).catch(() => null))?.versions ?? [];
+        const fix = await findFixedVersion(probe, r.name, r.current, versions, idSet(vulns), ver, config.security.strategy);
+        if (!fix) {
+          log.debug(`no fixed version for ${r.name}@${r.current} (${probe.ecosystem})`);
+          continue;
+        }
+        out.push({
+          ecosystem: probe.ecosystem,
+          manifestPath: mPath,
+          dir,
+          name: r.name,
+          kind: r.kind,
+          currentRange: r.range,
+          currentVersion: r.current,
+          latestVersion: fix,
+          updateType: ver.diff(r.current, fix),
+          security: { ids: [...idSet(vulns)], severity: topSeverity(vulns) },
+        });
+      }
+    }
+  }
+  return out;
+}

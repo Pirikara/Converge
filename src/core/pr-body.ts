@@ -107,6 +107,21 @@ function renderSafety(verdict: SafetyVerdict): string[] {
  * Render the PR body: resolution (F1, incl. auto co-bumps) + safety (F2) +
  * impact (F3) + deprecation (F4). Ecosystem-aware; never overclaims.
  */
+/** Security-fix banner (F2.2): shown when the current version is vulnerable. */
+function renderSecurityFix(c: UpdateCandidate): string[] {
+  if (!c.security) return [];
+  const ids = c.security.ids
+    .map((id) => (/^(GHSA|CVE|MAL)-/i.test(id) ? `[${id}](https://osv.dev/vulnerability/${id})` : id))
+    .join(", ");
+  return [
+    `### 🔒 Security fix (${c.security.severity})`,
+    `- \`${c.name}@${c.currentVersion ?? c.currentRange}\` is affected by a known vulnerability; ` +
+      `this bumps to \`${c.latestVersion}\`, the fixed version.`,
+    `- advisories: ${ids}`,
+    "",
+  ];
+}
+
 export function renderPrBody(
   c: UpdateCandidate,
   res: CandidateResolution,
@@ -119,6 +134,7 @@ export function renderPrBody(
   const lines = [
     `## Converge: ${c.name} ${from} → ${c.latestVersion}  ·  Risk: ${impact.risk.risk}`,
     "",
+    ...renderSecurityFix(c),
     ...renderResolution(c, res),
     "",
     ...renderSafety(safety),

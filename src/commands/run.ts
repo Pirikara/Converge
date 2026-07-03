@@ -10,6 +10,7 @@ import { stripJsonComments } from "../config/load.js";
 import { selectCandidates, branchName, streamId, type UpdateType } from "../core/plan.js";
 import { resolveCandidate, resolveGroup, type CandidateResolution, type GroupResolution } from "../core/apply.js";
 import { partitionGroups } from "../core/groups.js";
+import { securityCandidates } from "../core/security.js";
 import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody, renderActionsPrBody, renderTerraformPrBody, renderNugetPrBody, renderComposerPrBody, renderHelmPrBody, renderMavenPrBody } from "../core/pr-body.js";
 import { evaluateSafety } from "../safety/gate.js";
 import { provenanceStatus } from "../safety/provenance.js";
@@ -386,7 +387,19 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
   );
 
   const { selected } = await selectCandidates(gh, ref, config, { allow, limit });
-  if (selected.length === 0) {
+
+  // Security remediation (F2.2): a direct dep whose *current* version is
+  // vulnerable gets a fix candidate regardless of the type filter — and it
+  // supersedes any routine candidate for the same dependency.
+  const security = await securityCandidates(gh, ref, config, base);
+  const depKey = (c: UpdateCandidate): string => `${c.ecosystem}:${c.dir}:${c.name}`;
+  const secKeys = new Set(security.map(depKey));
+  const candidates = [...security, ...selected.filter((c) => !secKeys.has(depKey(c)))];
+  if (security.length > 0) {
+    log.info(`${pc.red(`${security.length} security fix(es)`)} for vulnerable direct dependencies`);
+  }
+
+  if (candidates.length === 0) {
     log.info(pc.green("no eligible updates ✓"));
     return 0;
   }
@@ -464,7 +477,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
     );
 
   // Grouping (F1): bundle configured deps in the same ecosystem+dir into one PR.
-  const { groups, individual } = partitionGroups(selected, config.groups);
+  const { groups, individual } = partitionGroups(candidates, config.groups);
 
   for (const group of groups) {
     const head = group.candidates[0]!;
@@ -545,9 +558,10 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
   }
 
   for (const candidate of individual) {
+    const sec = candidate.security ? pc.red(` 🔒 security/${candidate.security.severity}`) : "";
     process.stdout.write(
       `\n${pc.bold(candidate.name)} ${pc.dim(candidate.currentVersion ?? candidate.currentRange)} → ` +
-        `${pc.bold(candidate.latestVersion)} [${candidate.updateType}] ` +
+        `${pc.bold(candidate.latestVersion)} [${candidate.updateType}]${sec} ` +
         `${pc.dim(`(${candidate.ecosystem}, ${candidate.dir})`)}\n`,
     );
 
@@ -730,11 +744,14 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       continue;
     }
 
-    // F2 gate first: never resolve/install a dangerous or held version.
+    // F2 gate first: never resolve/install a dangerous or held version. A
+    // security fix bypasses the cooldown "hold" (we want the patch now) but a
+    // "block" (malware/vuln target) still stops it.
     const meta = await getMeta(candidate);
     const verdict = await safetyOf(candidate, meta);
     printSafety(verdict);
-    if (verdict.decision === "block" || verdict.decision === "hold") {
+    const heldByCooldown = verdict.decision === "hold" && !candidate.security;
+    if (verdict.decision === "block" || heldByCooldown) {
       blocked++;
       process.stdout.write(
         `  ${pc.red("⛔ skipped")} — ${verdict.decision === "block" ? "unsafe target" : "within cooldown"}\n`,

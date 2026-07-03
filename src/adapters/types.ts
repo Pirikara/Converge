@@ -38,6 +38,14 @@ export interface DependencyEntry {
   repository?: string;
 }
 
+/** A security-remediation marker on a candidate (current version is vulnerable). */
+export interface SecurityFix {
+  /** OSV/advisory ids the target version resolves (e.g. GHSA-…, CVE-…). */
+  ids: string[];
+  /** Highest severity among the resolved advisories. */
+  severity: string;
+}
+
 export interface Manifest {
   ecosystem: EcosystemId;
   /** Absolute path to the manifest file (e.g. package.json). */
@@ -61,6 +69,12 @@ export interface UpdateCandidate {
   latestVersion: string;
   /** semver delta of currentVersion -> latestVersion. */
   updateType: "major" | "minor" | "patch" | "none" | "unknown";
+  /**
+   * Present when this candidate remediates a known vulnerability in the current
+   * version (security fix). Such candidates bypass the update-type filter and
+   * cooldown, and are surfaced with the advisory in the PR.
+   */
+  security?: SecurityFix;
   /**
    * Manifest text to write in place of `currentRange`, when it differs from
    * `latestVersion`. Used by constraint-based ecosystems (e.g. Composer) where

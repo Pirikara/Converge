@@ -96,6 +96,16 @@ export const ConfigSchema = z
     // base; "behind": rebase any PR whose branch fell behind base; "never": don't
     // auto-rebase. A PR a human has pushed extra commits to is never rebased.
     rebase: z.enum(["conflicting", "behind", "never"]).default("conflicting"),
+    // Open PRs to remediate known vulnerabilities in *direct* dependencies whose
+    // current version is affected (via OSV), independent of routine updates.
+    // "strategy": which fixed version to target — "lowest" (earliest that fixes
+    // it, default) or "highest" (latest).
+    security: z
+      .object({
+        enabled: z.boolean().default(true),
+        strategy: z.enum(["lowest", "highest"]).default("lowest"),
+      })
+      .default({}),
     safety: z
       .object({
         cooldownDays: z.number().int().min(0).default(3),
