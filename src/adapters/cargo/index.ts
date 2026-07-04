@@ -8,6 +8,7 @@ import type {
 } from "../types.js";
 import { parseCargoToml } from "./cargo-toml.js";
 import { fetchCrateMeta } from "./cratesio.js";
+import { cargoUpdateType } from "./versioning.js";
 import { getVersioning } from "../../versioning/index.js";
 import { log } from "../../logger.js";
 
@@ -58,7 +59,7 @@ export class CargoAdapter implements EcosystemAdapter {
           currentRange: dep.range,
           currentVersion,
           latestVersion: meta.latest,
-          updateType: ver.diff(currentVersion ?? dep.range, meta.latest),
+          updateType: cargoUpdateType(currentVersion ?? dep.range, meta.latest),
         };
         return candidate;
       }),

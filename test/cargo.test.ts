@@ -2,7 +2,27 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { parseCargoToml, editCargoToml } from "../src/adapters/cargo/cargo-toml.js";
 import { parseCargoLock } from "../src/audit/parsers.js";
 import { CargoAdapter } from "../src/adapters/cargo/index.js";
+import { cargoUpdateType } from "../src/adapters/cargo/versioning.js";
 import { findRustUsage } from "../src/impact/usage.js";
+
+describe("cargoUpdateType (Cargo SemVer: 0.x boundary is breaking)", () => {
+  it("treats a 0.x minor change as major (breaking)", () => {
+    expect(cargoUpdateType("0.24.7", "0.26.10")).toBe("major");
+    expect(cargoUpdateType("0.32.1", "0.40.1")).toBe("major");
+  });
+  it("treats a 0.x.y patch change as patch", () => {
+    expect(cargoUpdateType("0.24.7", "0.24.10")).toBe("patch");
+  });
+  it("treats a 0.0.z change as major (breaking)", () => {
+    expect(cargoUpdateType("0.0.5", "0.0.6")).toBe("major");
+  });
+  it("classifies x.y.z (x>0) the standard way", () => {
+    expect(cargoUpdateType("1.2.3", "2.0.0")).toBe("major");
+    expect(cargoUpdateType("1.2.3", "1.3.0")).toBe("minor");
+    expect(cargoUpdateType("1.2.3", "1.2.4")).toBe("patch");
+    expect(cargoUpdateType("1.2.3", "1.2.3")).toBe("none");
+  });
+});
 
 describe("parseCargoToml", () => {
   it("parses simple and table deps across sections; skips git/workspace", () => {

@@ -13,6 +13,7 @@ import { GoAdapter } from "../adapters/gomod/index.js";
 import { fetchGoMeta } from "../adapters/gomod/proxy.js";
 import { CargoAdapter } from "../adapters/cargo/index.js";
 import { fetchCrateMeta } from "../adapters/cargo/cratesio.js";
+import { cargoUpdateType } from "../adapters/cargo/versioning.js";
 import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
 import { fetchGemMeta } from "../adapters/rubygems/rubygems.js";
 import { NuGetAdapter, fetchNuGetMeta } from "../adapters/nuget/index.js";
@@ -39,6 +40,8 @@ const semver = getVersioning("semver");
 const pep440 = getVersioning("pep440");
 const goVer = getVersioning("go");
 const gem = getVersioning("gem");
+// Cargo is SemVer but classifies 0.x boundary changes as breaking.
+const cargoOps: VersionOps = { ...semver, diff: cargoUpdateType };
 
 // NuGet and Maven have their own comparators (not getVersioning schemes).
 const nugetOps: VersionOps = {
@@ -110,7 +113,7 @@ const PROBES: EcoProbe[] = [
   {
     ecosystem: "cargo",
     osv: "crates.io",
-    ops: semver,
+    ops: cargoOps,
     makeAdapter: () => new CargoAdapter(),
     fetchMeta: fetchCrateMeta,
     lockfiles: ["Cargo.lock"],

@@ -34,9 +34,13 @@ async function readIfExists(dir: string, name: string): Promise<ResolvedFile | n
  * or run.
  */
 export async function updateCargoAll(workdir: string): Promise<CargoUpdateResult> {
-  log.debug(`cargo update (cwd=${workdir})`);
+  // MSRV-aware: when the crate declares `rust-version`, don't pull versions that
+  // require a newer rustc than the project supports (falls back to a compatible
+  // version). Harmless when no rust-version is declared.
+  const args = ["update", "--config", 'resolver.incompatible-rust-versions="fallback"'];
+  log.debug(`cargo ${args.join(" ")} (cwd=${workdir})`);
   try {
-    await execFileAsync("cargo", ["update"], { cwd: workdir, maxBuffer: 32 * 1024 * 1024 });
+    await execFileAsync("cargo", args, { cwd: workdir, maxBuffer: 32 * 1024 * 1024 });
     const files: ResolvedFile[] = [];
     const lock = await readIfExists(workdir, "Cargo.lock");
     if (lock) files.push(lock);
