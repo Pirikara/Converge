@@ -16,6 +16,8 @@ function npmLock(pkgs: Record<string, string>) {
 }
 const composerLock = (pkgs: Record<string, string>) =>
   JSON.stringify({ packages: Object.entries(pkgs).map(([name, version]) => ({ name, version })), "packages-dev": [] });
+const cargoLock = (pkgs: Record<string, string>) =>
+  "version = 3\n" + Object.entries(pkgs).map(([n, v]) => `\n[[package]]\nname = "${n}"\nversion = "${v}"\n`).join("");
 
 function result(over: Partial<LockRefreshResult> = {}): LockRefreshResult {
   return {
@@ -115,6 +117,15 @@ describe("diffLocks", () => {
   it("ignores packages present only in the new lock", () => {
     const changed = diffLocks("package-lock.json", npmLock({ a: "1.0.0" }), npmLock({ a: "1.0.0", b: "2.0.0" }));
     expect(changed).toEqual([]);
+  });
+
+  it("reports Cargo.lock crate version changes", () => {
+    const changed = diffLocks(
+      "Cargo.lock",
+      cargoLock({ openssl: "0.10.75", keep: "1.0.0" }),
+      cargoLock({ openssl: "0.10.81", keep: "1.0.0" }),
+    );
+    expect(changed).toEqual([{ name: "openssl", from: "0.10.75", to: "0.10.81" }]);
   });
 });
 

@@ -207,7 +207,7 @@ All 12 ecosystems are enabled by default; list one only to change it.
   // Lockfile refresh (opt-in): regenerate lockfiles within the existing
   // manifest ranges — no manifest change, no overrides — pulling transitive deps
   // up to their latest allowed version. Catches in-range transitive security
-  // fixes (the PR flags which advisories it clears). npm/pnpm, Composer, Go.
+  // fixes (the PR flags which advisories it clears). npm/pnpm, Composer, Go, Cargo.
   "lockRefresh": { "enabled": true },
   "ecosystems": {
     "npm":    { "enabled": true, "directories": ["frontend/"] },

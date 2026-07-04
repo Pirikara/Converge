@@ -10,6 +10,7 @@ import { vulnDecision } from "../safety/gate.js";
 import { resolveLockfile } from "../resolve/npm-cli.js";
 import { regeneratePnpmLockfile } from "../resolve/pnpm-cli.js";
 import { updateComposerAll } from "../resolve/composer-cli.js";
+import { updateCargoAll } from "../resolve/cargo-cli.js";
 import { goUpdateAll, extractTarballTo } from "../resolve/go-cli.js";
 import { log } from "../logger.js";
 
@@ -45,7 +46,7 @@ export interface LockRefreshResult {
   warnings: string[];
 }
 
-const OSV_ECO: Partial<Record<EcosystemId, string>> = { npm: "npm", composer: "Packagist", gomod: "Go" };
+const OSV_ECO: Partial<Record<EcosystemId, string>> = { npm: "npm", composer: "Packagist", gomod: "Go", cargo: "crates.io" };
 const osvVer = (eco: EcosystemId, v: string): string => (eco === "gomod" ? v.replace(/^v/, "") : v);
 
 /** Regenerated files for one lockfile, or null if unavailable / failed / unchanged. */
@@ -116,6 +117,33 @@ async function regenComposer(gh: GitHubClient, ref: RepoRef, base: string, dir: 
     const content = await readFileIf(workdir, "composer.lock");
     if (content == null) return null;
     return { files: [{ name: "composer.lock", content }], warnings: [] };
+  } finally {
+    await cleanup(workdir);
+  }
+}
+
+/**
+ * Cargo: `cargo update` (all crates) within Cargo.toml ranges. Needs the source
+ * tree (cargo validates that a target — src/main.rs / src/lib.rs — exists, and a
+ * workspace needs its member manifests), so fetch the tarball like Go. No crate
+ * code is compiled or run.
+ */
+async function regenCargo(gh: GitHubClient, ref: RepoRef, base: string, dir: string): Promise<Regen> {
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-lm-cargo-"));
+  try {
+    const src = await gh.downloadTarball(ref, base);
+    await extractTarballTo(src, workdir);
+    const crateDir = dir === "." ? workdir : path.join(workdir, dir);
+    await access(path.join(crateDir, "Cargo.toml"));
+    const r = await updateCargoAll(crateDir);
+    if (!r.ok) {
+      log.debug(`lockfile refresh cargo failed: ${r.stderr.split("\n").slice(-2).join(" ")}`);
+      return null;
+    }
+    return { files: r.files, warnings: [] };
+  } catch (err) {
+    log.debug(`lockfile refresh cargo unavailable: ${(err as Error).message}`);
+    return null;
   } finally {
     await cleanup(workdir);
   }
@@ -299,6 +327,7 @@ export async function lockRefresh(
     await collect("npm", "pnpm-lock.yaml", (dir) => regenNpm(gh, ref, base, dir, "pnpm-lock.yaml"));
   }
   if (enabled("composer")) await collect("composer", "composer.lock", (dir) => regenComposer(gh, ref, base, dir));
+  if (enabled("cargo")) await collect("cargo", "Cargo.lock", (dir) => regenCargo(gh, ref, base, dir));
   if (enabled("gomod")) await collect("gomod", "go.sum", (dir) => regenGo(gh, ref, base, dir));
 
   return out;
