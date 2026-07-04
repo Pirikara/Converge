@@ -242,8 +242,9 @@ Beyond blocking bad *targets*, Converge opens PRs to **fix a vulnerable version 
 already have**: for each direct dependency whose *installed* version (read from the
 lockfile, not just the manifest range) is affected by an OSV advisory, it bumps to the
 fixed version — bypassing the update-type filter, the cooldown, and the `schedule`
-window. Covers **npm, pip, Go, Cargo, RubyGems** (`security.strategy`: `lowest` (default)
-| `highest`). Direct dependencies only; transitive vulns are surfaced by `audit`.
+window. Covers **every OSV-indexed ecosystem** — npm, pip, Go, Cargo, RubyGems, NuGet,
+Composer, Maven/Gradle (`security.strategy`: `lowest` (default) | `highest`). Direct
+dependencies only; transitive vulns are surfaced by `audit`.
 
 ---
 

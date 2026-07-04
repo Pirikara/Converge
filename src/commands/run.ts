@@ -639,7 +639,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       const meta = await getMeta(candidate);
       const verdict = await safetyOf(candidate, meta);
       printSafety(verdict);
-      if (verdict.decision === "block" || verdict.decision === "hold") {
+      if (verdict.decision === "block" || (verdict.decision === "hold" && !candidate.security)) {
         blocked++;
         process.stdout.write(
           `  ${pc.red("⛔ skipped")} — ${verdict.decision === "block" ? "unsafe target" : "within cooldown"}\n`,
@@ -669,7 +669,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       const meta = await getMeta(candidate);
       const verdict = await safetyOf(candidate, meta);
       printSafety(verdict);
-      if (verdict.decision === "block" || verdict.decision === "hold") {
+      if (verdict.decision === "block" || (verdict.decision === "hold" && !candidate.security)) {
         blocked++;
         process.stdout.write(
           `  ${pc.red("⛔ skipped")} — ${verdict.decision === "block" ? "unsafe target" : "within cooldown"}\n`,
@@ -699,7 +699,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       const meta = await getMeta(candidate);
       const verdict = await safetyOf(candidate, meta);
       printSafety(verdict);
-      if (verdict.decision === "block" || verdict.decision === "hold") {
+      if (verdict.decision === "block" || (verdict.decision === "hold" && !candidate.security)) {
         blocked++;
         process.stdout.write(
           `  ${pc.red("⛔ skipped")} — ${verdict.decision === "block" ? "unsafe target" : "within cooldown"}\n`,
@@ -729,7 +729,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       const meta = await getMeta(candidate);
       const verdict = await safetyOf(candidate, meta);
       printSafety(verdict);
-      if (verdict.decision === "block" || verdict.decision === "hold") {
+      if (verdict.decision === "block" || (verdict.decision === "hold" && !candidate.security)) {
         blocked++;
         process.stdout.write(
           `  ${pc.red("⛔ skipped")} — ${verdict.decision === "block" ? "unsafe target" : "within cooldown"}\n`,

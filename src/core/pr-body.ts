@@ -205,6 +205,7 @@ export function renderNugetPrBody(c: UpdateCandidate, safety: SafetyVerdict): st
   return [
     `## Converge: ${c.name} ${c.currentRange} → ${c.latestVersion}`,
     "",
+    ...renderSecurityFix(c),
     "### 📦 NuGet",
     `- updates the \`${c.name}\` PackageReference in \`${c.manifestPath}\` (${c.updateType})`,
     `- \`${c.currentRange}\` → \`${c.latestVersion}\``,
@@ -225,6 +226,7 @@ export function renderComposerPrBody(c: UpdateCandidate, safety: SafetyVerdict):
   return [
     `## Converge: ${c.name} \`${c.currentRange}\` → \`${to}\``,
     "",
+    ...renderSecurityFix(c),
     "### 🎼 Composer",
     `- updates the \`${c.name}\` ${c.kind === "dev" ? "require-dev" : "require"} constraint in \`${c.manifestPath}\` (${c.updateType})`,
     `- \`${c.currentRange}\` → \`${to}\` (latest release: \`${c.latestVersion}\`)`,
@@ -264,6 +266,7 @@ export function renderMavenPrBody(c: UpdateCandidate, safety: SafetyVerdict): st
   return [
     `## Converge: ${c.name} ${c.currentRange} → ${c.latestVersion}`,
     "",
+    ...renderSecurityFix(c),
     `### ☕ ${tool}`,
     `- updates the \`${c.name}\` dependency in \`${c.manifestPath}\` (${c.updateType})`,
     `- \`${c.currentRange}\` → \`${c.latestVersion}\``,

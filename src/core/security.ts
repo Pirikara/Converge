@@ -2,7 +2,7 @@ import path from "node:path";
 import { GitHubClient, type RepoRef } from "../github/client.js";
 import type { Config } from "../config/schema.js";
 import type { EcosystemAdapter, EcosystemId, UpdateCandidate } from "../adapters/types.js";
-import { getVersioning, type Versioning } from "../versioning/index.js";
+import { getVersioning } from "../versioning/index.js";
 import { parseLockfile } from "../audit/lockfiles.js";
 import { queryOsv, queryOsvBatch, type OsvVuln } from "../safety/osv.js";
 import { NpmAdapter } from "../adapters/npm/index.js";
@@ -15,8 +15,46 @@ import { CargoAdapter } from "../adapters/cargo/index.js";
 import { fetchCrateMeta } from "../adapters/cargo/cratesio.js";
 import { RubyGemsAdapter } from "../adapters/rubygems/index.js";
 import { fetchGemMeta } from "../adapters/rubygems/rubygems.js";
+import { NuGetAdapter, fetchNuGetMeta } from "../adapters/nuget/index.js";
+import { parseNuGetVersion, compareNuGet, isStable as nugetIsStable, nugetUpdateType } from "../adapters/nuget/versioning.js";
+import { ComposerAdapter, fetchComposerMeta } from "../adapters/composer/index.js";
+import { currentSatisfied } from "../adapters/composer/versioning.js";
+import { MavenAdapter, fetchMavenMeta } from "../adapters/maven/index.js";
+import { compareMaven, isStable as mavenIsStable, mavenUpdateType } from "../adapters/maven/versioning.js";
 import type { PackageMeta } from "../adapters/types.js";
 import { log } from "../logger.js";
+
+/** The version primitives the security pass needs, unified across ecosystems. */
+interface VersionOps {
+  isValid(v: string): boolean;
+  isStable(v: string): boolean;
+  isGreaterThan(a: string, b: string): boolean;
+  compare(a: string, b: string): number;
+  diff(from: string, to: string): UpdateCandidate["updateType"];
+  /** Present for semver-family schemes; used to pick a locked version in-range. */
+  maxSatisfying?(versions: string[], range: string): string | null;
+}
+
+const semver = getVersioning("semver");
+const pep440 = getVersioning("pep440");
+const goVer = getVersioning("go");
+const gem = getVersioning("gem");
+
+// NuGet and Maven have their own comparators (not getVersioning schemes).
+const nugetOps: VersionOps = {
+  isValid: (v) => parseNuGetVersion(v) != null,
+  isStable: nugetIsStable,
+  isGreaterThan: (a, b) => compareNuGet(a, b) > 0,
+  compare: compareNuGet,
+  diff: nugetUpdateType,
+};
+const mavenOps: VersionOps = {
+  isValid: (v) => /^\d/.test(v.trim()),
+  isStable: mavenIsStable,
+  isGreaterThan: (a, b) => compareMaven(a, b) > 0,
+  compare: compareMaven,
+  diff: mavenUpdateType,
+};
 
 /**
  * How to probe one ecosystem for vulnerable *direct* dependencies. v1 covers npm
@@ -25,7 +63,7 @@ import { log } from "../logger.js";
 interface EcoProbe {
   ecosystem: EcosystemId;
   osv: string;
-  scheme: string;
+  ops: VersionOps;
   makeAdapter: () => EcosystemAdapter;
   fetchMeta: (name: string) => Promise<PackageMeta>;
   /** Lockfile basenames to consult for the *actually installed* version. */
@@ -33,25 +71,25 @@ interface EcoProbe {
   /** Transform a native version to the form OSV indexes (e.g. Go strips `v`). */
   osvVersion?: (v: string) => string;
   /** Resolve the concrete current version from a manifest range, or null. */
-  currentVersion: (range: string, versions: string[], ver: Versioning) => string | null;
+  currentVersion: (range: string, versions: string[]) => string | null;
 }
 
 const PROBES: EcoProbe[] = [
   {
     ecosystem: "npm",
     osv: "npm",
-    scheme: "semver",
+    ops: semver,
     makeAdapter: () => new NpmAdapter(),
     fetchMeta: fetchPackageMeta,
     // Prefer the locked version; the manifest range floats to a top that's
     // usually already patched, hiding a lagging lockfile.
     lockfiles: ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"],
-    currentVersion: (range, versions, ver) => ver.maxSatisfying(versions, range),
+    currentVersion: (range, versions) => semver.maxSatisfying(versions, range),
   },
   {
     ecosystem: "pip",
     osv: "PyPI",
-    scheme: "pep440",
+    ops: pep440,
     makeAdapter: () => new PipAdapter(),
     // requirements.txt `==` pins already are the installed version — no lockfile.
     lockfiles: [],
@@ -61,31 +99,60 @@ const PROBES: EcoProbe[] = [
   {
     ecosystem: "gomod",
     osv: "Go",
-    scheme: "go",
+    ops: goVer,
     makeAdapter: () => new GoAdapter(),
     fetchMeta: fetchGoMeta,
     // go.mod pins an exact version per direct module; OSV indexes it without `v`.
     lockfiles: [],
     osvVersion: (v) => v.replace(/^v/, ""),
-    currentVersion: (range, _versions, ver) => (ver.isValid(range) ? range : null),
+    currentVersion: (range) => (goVer.isValid(range) ? range : null),
   },
   {
     ecosystem: "cargo",
     osv: "crates.io",
-    scheme: "semver",
+    ops: semver,
     makeAdapter: () => new CargoAdapter(),
     fetchMeta: fetchCrateMeta,
     lockfiles: ["Cargo.lock"],
-    currentVersion: (range, versions, ver) => ver.maxSatisfying(versions, range),
+    currentVersion: (range, versions) => semver.maxSatisfying(versions, range),
   },
   {
     ecosystem: "rubygems",
     osv: "RubyGems",
-    scheme: "gem",
+    ops: gem,
     makeAdapter: () => new RubyGemsAdapter(),
     fetchMeta: fetchGemMeta,
     lockfiles: ["Gemfile.lock"],
-    currentVersion: (range, versions, ver) => ver.maxSatisfying(versions, range),
+    currentVersion: (range, versions) => gem.maxSatisfying(versions, range),
+  },
+  {
+    ecosystem: "nuget",
+    osv: "NuGet",
+    ops: nugetOps,
+    makeAdapter: () => new NuGetAdapter(),
+    fetchMeta: fetchNuGetMeta,
+    // csproj `Version="8.0.0"` is an exact, installed version; no lockfile needed.
+    lockfiles: [],
+    currentVersion: (range) => (parseNuGetVersion(range) ? range : null),
+  },
+  {
+    ecosystem: "composer",
+    osv: "Packagist",
+    ops: semver,
+    makeAdapter: () => new ComposerAdapter(),
+    fetchMeta: fetchComposerMeta,
+    lockfiles: ["composer.lock"],
+    currentVersion: (range, versions) => currentSatisfied(range, versions),
+  },
+  {
+    ecosystem: "maven",
+    osv: "Maven",
+    ops: mavenOps,
+    makeAdapter: () => new MavenAdapter(),
+    fetchMeta: fetchMavenMeta,
+    // pom/gradle version is exact (skip ${properties} / ranges); no lockfile.
+    lockfiles: [],
+    currentVersion: (range) => (/^\d/.test(range.trim()) ? range : null),
   },
 ];
 
@@ -122,12 +189,12 @@ async function findFixedVersion(
   current: string,
   versions: string[],
   vulnIds: Set<string>,
-  ver: Versioning,
   strategy: "lowest" | "highest",
 ): Promise<string | null> {
+  const ops = probe.ops;
   const candidates = versions
-    .filter((v) => ver.isValid(v) && ver.isStable(v) && ver.isGreaterThan(v, current))
-    .sort((a, b) => ver.compare(a, b));
+    .filter((v) => ops.isValid(v) && ops.isStable(v) && ops.isGreaterThan(v, current))
+    .sort((a, b) => ops.compare(a, b));
   if (strategy === "highest") candidates.reverse();
 
   for (const v of candidates) {
@@ -193,7 +260,7 @@ export async function securityCandidates(
 
   for (const probe of PROBES) {
     if (!(config.ecosystems[probe.ecosystem]?.enabled ?? false)) continue;
-    const ver = getVersioning(probe.scheme);
+    const ops = probe.ops;
     const adapter = probe.makeAdapter();
     const paths = await manifestPaths(gh, ref, base, adapter);
 
@@ -218,9 +285,9 @@ export async function securityCandidates(
             const meta = await probe.fetchMeta(dep.name);
             const inLock = locked.get(dep.name);
             const current =
-              (inLock && ver.maxSatisfying(inLock, dep.range)) ??
-              probe.currentVersion(dep.range, meta.versions, ver);
-            if (current && ver.isValid(current)) resolved.push({ name: dep.name, range: dep.range, kind: dep.kind, current });
+              (inLock && ops.maxSatisfying?.(inLock, dep.range)) ??
+              probe.currentVersion(dep.range, meta.versions);
+            if (current && ops.isValid(current)) resolved.push({ name: dep.name, range: dep.range, kind: dep.kind, current });
           } catch {
             /* unknown package / registry error → skip */
           }
@@ -235,7 +302,7 @@ export async function securityCandidates(
         const vulns = await queryOsv(probe.osv, r.name, osvForm(probe, r.current));
         if (vulns.length === 0) continue;
         const versions = (await probe.fetchMeta(r.name).catch(() => null))?.versions ?? [];
-        const fix = await findFixedVersion(probe, r.name, r.current, versions, idSet(vulns), ver, config.security.strategy);
+        const fix = await findFixedVersion(probe, r.name, r.current, versions, idSet(vulns), config.security.strategy);
         if (!fix) {
           log.debug(`no fixed version for ${r.name}@${r.current} (${probe.ecosystem})`);
           continue;
@@ -249,7 +316,7 @@ export async function securityCandidates(
           currentRange: r.range,
           currentVersion: r.current,
           latestVersion: fix,
-          updateType: ver.diff(r.current, fix),
+          updateType: ops.diff(r.current, fix),
           security: { ids: [...idSet(vulns)], severity: topSeverity(vulns) },
         });
       }
