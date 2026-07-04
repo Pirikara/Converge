@@ -1,10 +1,41 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, access } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import type { ResolvedFile } from "./types.js";
 import { log } from "../logger.js";
 
 const execFileAsync = promisify(execFile);
+
+export interface UvRefreshResult {
+  ok: boolean;
+  files: ResolvedFile[];
+  stderr: string;
+}
+
+/**
+ * Lock file refresh: `uv lock --upgrade` re-resolves every dependency to the
+ * latest version allowed by pyproject.toml (pyproject is never modified),
+ * writing only uv.lock. `--no-build` never executes a build backend.
+ */
+export async function updateUvLock(workdir: string): Promise<UvRefreshResult> {
+  const args = ["lock", "--upgrade", "--no-build"];
+  log.debug(`uv ${args.join(" ")} (cwd=${workdir})`);
+  try {
+    await execFileAsync("uv", args, { cwd: workdir, maxBuffer: 32 * 1024 * 1024 });
+    const files: ResolvedFile[] = [];
+    try {
+      await access(path.join(workdir, "uv.lock"));
+      files.push({ name: "uv.lock", content: await readFile(path.join(workdir, "uv.lock"), "utf8") });
+    } catch {
+      /* no uv.lock produced */
+    }
+    return { ok: true, files, stderr: "" };
+  } catch (err) {
+    const e = err as { stderr?: string; stdout?: string };
+    return { ok: false, files: [], stderr: (e.stderr ?? e.stdout ?? String(err)).trim() };
+  }
+}
 
 export type UvFailureKind = "conflict" | "needs-build" | "error";
 

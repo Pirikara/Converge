@@ -11,6 +11,8 @@ import { resolveLockfile } from "../resolve/npm-cli.js";
 import { regeneratePnpmLockfile } from "../resolve/pnpm-cli.js";
 import { updateComposerAll } from "../resolve/composer-cli.js";
 import { updateCargoAll } from "../resolve/cargo-cli.js";
+import { updateBundleAll } from "../resolve/ruby-cli.js";
+import { updateUvLock } from "../resolve/uv-cli.js";
 import { goUpdateAll, extractTarballTo } from "../resolve/go-cli.js";
 import { log } from "../logger.js";
 
@@ -46,7 +48,7 @@ export interface LockRefreshResult {
   warnings: string[];
 }
 
-const OSV_ECO: Partial<Record<EcosystemId, string>> = { npm: "npm", composer: "Packagist", gomod: "Go", cargo: "crates.io" };
+const OSV_ECO: Partial<Record<EcosystemId, string>> = { npm: "npm", composer: "Packagist", gomod: "Go", cargo: "crates.io", rubygems: "RubyGems", pip: "PyPI" };
 const osvVer = (eco: EcosystemId, v: string): string => (eco === "gomod" ? v.replace(/^v/, "") : v);
 
 /** Regenerated files for one lockfile, or null if unavailable / failed / unchanged. */
@@ -144,6 +146,48 @@ async function regenCargo(gh: GitHubClient, ref: RepoRef, base: string, dir: str
   } catch (err) {
     log.debug(`lockfile refresh cargo unavailable: ${(err as Error).message}`);
     return null;
+  } finally {
+    await cleanup(workdir);
+  }
+}
+
+/** RubyGems: `bundle lock --update` (all gems) within Gemfile constraints. */
+async function regenRuby(gh: GitHubClient, ref: RepoRef, base: string, dir: string): Promise<Regen> {
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const gemfile = await gh.getFile(ref, `${prefix}Gemfile`, base);
+  const lock = await gh.getFile(ref, `${prefix}Gemfile.lock`, base);
+  if (!gemfile || !lock) return null;
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-lm-ruby-"));
+  try {
+    await writeFile(path.join(workdir, "Gemfile"), gemfile.content);
+    await writeFile(path.join(workdir, "Gemfile.lock"), lock.content);
+    const r = await updateBundleAll(workdir);
+    if (!r.ok) {
+      log.debug(`lockfile refresh ruby failed: ${r.stderr.split("\n").slice(-2).join(" ")}`);
+      return null;
+    }
+    return { files: r.files, warnings: [] };
+  } finally {
+    await cleanup(workdir);
+  }
+}
+
+/** pip (uv): `uv lock --upgrade` (all deps) within pyproject.toml constraints. */
+async function regenUv(gh: GitHubClient, ref: RepoRef, base: string, dir: string): Promise<Regen> {
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const pyproject = await gh.getFile(ref, `${prefix}pyproject.toml`, base);
+  const lock = await gh.getFile(ref, `${prefix}uv.lock`, base);
+  if (!pyproject || !lock) return null;
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-lm-uv-"));
+  try {
+    await writeFile(path.join(workdir, "pyproject.toml"), pyproject.content);
+    await writeFile(path.join(workdir, "uv.lock"), lock.content);
+    const r = await updateUvLock(workdir);
+    if (!r.ok) {
+      log.debug(`lockfile refresh uv failed: ${r.stderr.split("\n").slice(-2).join(" ")}`);
+      return null;
+    }
+    return { files: r.files, warnings: [] };
   } finally {
     await cleanup(workdir);
   }
@@ -328,6 +372,8 @@ export async function lockRefresh(
   }
   if (enabled("composer")) await collect("composer", "composer.lock", (dir) => regenComposer(gh, ref, base, dir));
   if (enabled("cargo")) await collect("cargo", "Cargo.lock", (dir) => regenCargo(gh, ref, base, dir));
+  if (enabled("rubygems")) await collect("rubygems", "Gemfile.lock", (dir) => regenRuby(gh, ref, base, dir));
+  if (enabled("pip")) await collect("pip", "uv.lock", (dir) => regenUv(gh, ref, base, dir));
   if (enabled("gomod")) await collect("gomod", "go.sum", (dir) => regenGo(gh, ref, base, dir));
 
   return out;

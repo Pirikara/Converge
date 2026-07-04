@@ -18,6 +18,12 @@ const composerLock = (pkgs: Record<string, string>) =>
   JSON.stringify({ packages: Object.entries(pkgs).map(([name, version]) => ({ name, version })), "packages-dev": [] });
 const cargoLock = (pkgs: Record<string, string>) =>
   "version = 3\n" + Object.entries(pkgs).map(([n, v]) => `\n[[package]]\nname = "${n}"\nversion = "${v}"\n`).join("");
+const gemfileLock = (specs: Record<string, string>) =>
+  "GEM\n  remote: https://rubygems.org/\n  specs:\n" +
+  Object.entries(specs).map(([n, v]) => `    ${n} (${v})\n`).join("") +
+  "\nPLATFORMS\n  ruby\n\nDEPENDENCIES\n";
+const uvLock = (pkgs: Record<string, string>) =>
+  "version = 1\n" + Object.entries(pkgs).map(([n, v]) => `\n[[package]]\nname = "${n}"\nversion = "${v}"\n`).join("");
 
 function result(over: Partial<LockRefreshResult> = {}): LockRefreshResult {
   return {
@@ -126,6 +132,24 @@ describe("diffLocks", () => {
       cargoLock({ openssl: "0.10.81", keep: "1.0.0" }),
     );
     expect(changed).toEqual([{ name: "openssl", from: "0.10.75", to: "0.10.81" }]);
+  });
+
+  it("reports Gemfile.lock gem version changes", () => {
+    const changed = diffLocks(
+      "Gemfile.lock",
+      gemfileLock({ rack: "2.2.0", nokogiri: "1.16.0" }),
+      gemfileLock({ rack: "2.2.23", nokogiri: "1.16.0" }),
+    );
+    expect(changed).toEqual([{ name: "rack", from: "2.2.0", to: "2.2.23" }]);
+  });
+
+  it("reports uv.lock package version changes", () => {
+    const changed = diffLocks(
+      "uv.lock",
+      uvLock({ jinja2: "3.1.2", click: "8.1.0" }),
+      uvLock({ jinja2: "3.1.6", click: "8.1.0" }),
+    );
+    expect(changed).toEqual([{ name: "jinja2", from: "3.1.2", to: "3.1.6" }]);
   });
 });
 
