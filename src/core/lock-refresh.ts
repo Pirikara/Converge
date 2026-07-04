@@ -125,7 +125,7 @@ async function regenGo(gh: GitHubClient, ref: RepoRef, base: string, dir: string
   }
 }
 
-function highest(versions: string[]): string {
+export function highest(versions: string[]): string {
   return [...versions].sort((a, b) => {
     const pa = a.split(/[.+-]/).map((n) => parseInt(n, 10));
     const pb = b.split(/[.+-]/).map((n) => parseInt(n, 10));
@@ -148,7 +148,7 @@ function versionsByName(lockName: string, content: string): Map<string, string[]
 }
 
 /** Packages whose locked version set changed (present in both old and new). */
-function diffLocks(lockName: string, oldC: string, newC: string): LockChange[] {
+export function diffLocks(lockName: string, oldC: string, newC: string): LockChange[] {
   const oldM = versionsByName(lockName, oldC);
   const newM = versionsByName(lockName, newC);
   const changed: LockChange[] = [];
@@ -166,7 +166,7 @@ function diffLocks(lockName: string, oldC: string, newC: string): LockChange[] {
 }
 
 /** Which of the changed packages moved off an OSV-affected version. */
-async function securityFixed(
+export async function securityFixed(
   ecosystem: EcosystemId,
   changed: LockChange[],
 ): Promise<(LockChange & { ids: string[] })[]> {
