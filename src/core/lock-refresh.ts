@@ -10,6 +10,7 @@ import { vulnDecision } from "../safety/gate.js";
 import { resolveLockfile } from "../resolve/npm-cli.js";
 import { regeneratePnpmLockfile } from "../resolve/pnpm-cli.js";
 import { regenerateYarnLockfile } from "../resolve/yarn-cli.js";
+import { regenerateBunLockfile } from "../resolve/bun-cli.js";
 import { updateComposerAll } from "../resolve/composer-cli.js";
 import { updateCargoAll } from "../resolve/cargo-cli.js";
 import { updateBundleAll } from "../resolve/ruby-cli.js";
@@ -93,7 +94,9 @@ async function regenNpm(
       ? regeneratePnpmLockfile(workdir)
       : lockName === "yarn.lock"
         ? regenerateYarnLockfile(workdir)
-        : resolveLockfile(workdir));
+        : lockName === "bun.lock"
+          ? regenerateBunLockfile(workdir)
+          : resolveLockfile(workdir));
     if (!r.ok) {
       log.debug(`lockfile refresh ${lockName} failed: ${r.stderr.split("\n").slice(-2).join(" ")}`);
       return null;
@@ -372,7 +375,7 @@ export async function lockRefresh(
   };
 
   if (enabled("npm")) {
-    for (const lock of ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"]) {
+    for (const lock of ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"]) {
       await collect("npm", lock, (dir) => regenNpm(gh, ref, base, dir, lock));
     }
   }

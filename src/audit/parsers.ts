@@ -70,6 +70,31 @@ function nameFromYarnDescriptor(key: string): string | null {
   return key.slice(0, at);
 }
 
+/**
+ * bun.lock (lockfileVersion 1) — JSONC (trailing commas). `packages` maps a key
+ * to an array whose first element is `"name@version"` (e.g.
+ * `"is-odd": ["is-odd@3.0.1", …]`). Scoped names keep their leading `@`.
+ */
+export function parseBunLock(content: string): LockPackage[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(content.replace(/,(\s*[}\]])/g, "$1")); // strip trailing commas
+  } catch {
+    return [];
+  }
+  const pkgs = (data as { packages?: Record<string, unknown> })?.packages;
+  if (!pkgs || typeof pkgs !== "object") return [];
+  const out: LockPackage[] = [];
+  for (const v of Object.values(pkgs)) {
+    const spec = Array.isArray(v) ? v[0] : undefined;
+    if (typeof spec !== "string") continue;
+    const at = spec.lastIndexOf("@");
+    if (at <= 0) continue; // no version, or only a leading-@ scope
+    out.push({ name: spec.slice(0, at), version: spec.slice(at + 1) });
+  }
+  return dedupe(out);
+}
+
 /** go.sum — `module vX.Y.Z[/go.mod] h1:hash`. Versions stored without the `v` (OSV form). */
 export function parseGoSum(content: string): LockPackage[] {
   const out: LockPackage[] = [];

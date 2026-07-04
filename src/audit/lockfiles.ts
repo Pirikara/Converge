@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseNpmLockTree, type LockPackage } from "./lockfile-npm.js";
-import { parsePnpmLock, parseYarnLock, parseGoSum, parseGemfileLock, parseCargoLock, parseTomlLockPackages, parseComposerLock } from "./parsers.js";
+import { parsePnpmLock, parseYarnLock, parseBunLock, parseGoSum, parseGemfileLock, parseCargoLock, parseTomlLockPackages, parseComposerLock } from "./parsers.js";
 import { parseGoMod } from "../adapters/gomod/gomod.js";
 import { parseCargoToml } from "../adapters/cargo/cargo-toml.js";
 import { parsePyproject } from "../adapters/pyproject/parse.js";
@@ -28,6 +28,8 @@ export function parseLockfile(
       return { ecosystem: "npm", packages: parsePnpmLock(content) };
     case "yarn.lock":
       return { ecosystem: "npm", packages: parseYarnLock(content) };
+    case "bun.lock":
+      return { ecosystem: "npm", packages: parseBunLock(content) };
     case "go.sum":
       return { ecosystem: "Go", packages: parseGoSum(content) };
     case "Gemfile.lock":
@@ -93,16 +95,18 @@ export async function enumerateLocks(dir: string): Promise<EnumeratedLock[]> {
   const out: EnumeratedLock[] = [];
 
   // npm family → OSV ecosystem "npm" (one lockfile per project)
-  const [pl, pnpm, yarn] = await Promise.all([
+  const [pl, pnpm, yarn, bun] = await Promise.all([
     read(path.join(dir, "package-lock.json")),
     read(path.join(dir, "pnpm-lock.yaml")),
     read(path.join(dir, "yarn.lock")),
+    read(path.join(dir, "bun.lock")),
   ]);
-  if (pl || pnpm || yarn) {
+  if (pl || pnpm || yarn || bun) {
     const directs = await npmDirects(dir);
     if (pl) out.push({ file: "package-lock.json", ecosystem: "npm", packages: parseNpmLockTree(pl), directs });
     else if (pnpm) out.push({ file: "pnpm-lock.yaml", ecosystem: "npm", packages: parsePnpmLock(pnpm), directs });
     else if (yarn) out.push({ file: "yarn.lock", ecosystem: "npm", packages: parseYarnLock(yarn), directs });
+    else if (bun) out.push({ file: "bun.lock", ecosystem: "npm", packages: parseBunLock(bun), directs });
   }
 
   // RubyGems

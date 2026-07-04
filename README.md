@@ -100,7 +100,7 @@ node dist/cli.js scan ./repo --json
 
 ### `audit` — scan the whole lockfile tree for malware & vulns (local, read-only)
 
-Walks the **transitive** dependency tree from your lockfiles (npm/pnpm/yarn, Cargo,
+Walks the **transitive** dependency tree from your lockfiles (npm/pnpm/yarn/bun, Cargo,
 Go, Gemfile, poetry/uv, composer) and checks every package against OSV — catching
 malware and vulnerabilities that direct-only scanners miss.
 
@@ -207,8 +207,8 @@ All 12 ecosystems are enabled by default; list one only to change it.
   // Lockfile refresh (opt-in): regenerate lockfiles within the existing
   // manifest ranges — no manifest change, no overrides — pulling transitive deps
   // up to their latest allowed version. Catches in-range transitive security
-  // fixes (the PR flags which advisories it clears). npm/pnpm/Yarn, Composer,
-  // Go, Cargo, RubyGems, pip (uv.lock).
+  // fixes (the PR flags which advisories it clears). npm/pnpm/Yarn/bun,
+  // Composer, Go, Cargo, RubyGems, pip (uv.lock).
   "lockRefresh": { "enabled": true },
   "ecosystems": {
     "npm":    { "enabled": true, "directories": ["frontend/"] },

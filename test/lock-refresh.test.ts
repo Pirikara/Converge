@@ -29,6 +29,11 @@ const yarnLock = (pkgs: Record<string, string>) =>
   Object.entries(pkgs)
     .map(([n, v]) => `\n"${n}@npm:${v}":\n  version: ${v}\n  resolution: "${n}@npm:${v}"\n  languageName: node\n  linkType: hard\n`)
     .join("");
+// bun.lock is JSONC with trailing commas — the fixture keeps them on purpose.
+const bunLock = (pkgs: Record<string, string>) =>
+  '{\n  "lockfileVersion": 1,\n  "packages": {\n' +
+  Object.entries(pkgs).map(([n, v]) => `    "${n}": ["${n}@${v}", "", {}, "sha512-x"],\n`).join("") +
+  "  }\n}\n";
 
 function result(over: Partial<LockRefreshResult> = {}): LockRefreshResult {
   return {
@@ -162,6 +167,15 @@ describe("diffLocks", () => {
       "yarn.lock",
       yarnLock({ "is-odd": "3.0.0", left: "1.0.0" }),
       yarnLock({ "is-odd": "3.0.1", left: "1.0.0" }),
+    );
+    expect(changed).toEqual([{ name: "is-odd", from: "3.0.0", to: "3.0.1" }]);
+  });
+
+  it("reports bun.lock package version changes (JSONC with trailing commas)", () => {
+    const changed = diffLocks(
+      "bun.lock",
+      bunLock({ "is-odd": "3.0.0", left: "1.0.0" }),
+      bunLock({ "is-odd": "3.0.1", left: "1.0.0" }),
     );
     expect(changed).toEqual([{ name: "is-odd", from: "3.0.0", to: "3.0.1" }]);
   });
