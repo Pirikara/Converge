@@ -410,9 +410,12 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
     log.info(`${pc.red(`${security.length} security fix(es)`)} for vulnerable direct dependencies`);
   }
 
+  // Lock file refresh runs independently of routine/security candidates, so only
+  // short-circuit when it won't run either.
+  const willRefresh = config.lockRefresh.enabled && routineAllowed;
   if (candidates.length === 0) {
     log.info(pc.green("no eligible updates ✓"));
-    return 0;
+    if (!willRefresh) return 0;
   }
 
   const sourceCache = new Map<string, SourceFile[]>();
