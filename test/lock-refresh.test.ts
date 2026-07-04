@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderLockRefreshPrBody } from "../src/core/pr-body.js";
-import { diffLocks, highest, securityFixed, type LockRefreshResult } from "../src/core/lock-refresh.js";
+import { diffLocks, highest, securityFixed, vetNewVersions, type LockRefreshResult } from "../src/core/lock-refresh.js";
+import { ConfigSchema } from "../src/config/schema.js";
 
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
@@ -27,6 +28,7 @@ function result(over: Partial<LockRefreshResult> = {}): LockRefreshResult {
       { name: "symfony/deprecation-contracts", from: "2.5.4", to: "3.7.1" },
     ],
     securityFixed: [{ name: "guzzlehttp/guzzle", from: "7.4.0", to: "7.13.1", ids: ["CVE-2022-31090"] }],
+    blocked: [],
     warnings: [],
     ...over,
   };
@@ -168,5 +170,51 @@ describe("securityFixed", () => {
     const fixed = await securityFixed("gomod", [{ name: "x/y", from: "v1.0.0", to: "v1.2.0" }]);
     expect(fixed[0]?.ids).toEqual(["GO-1"]);
     expect(asked.every((v) => !v.startsWith("v"))).toBe(true); // v stripped for OSV
+  });
+});
+
+describe("vetNewVersions", () => {
+  beforeEach(() => fetchMock.mockReset());
+  const policy = ConfigSchema.parse({}).safety;
+
+  // advisoriesAt maps version → raw OSV advisory records the new version carries.
+  function routeVet(advisoriesAt: Record<string, unknown[]>) {
+    fetchMock.mockImplementation(async (url: unknown, init?: { body?: string }) => {
+      if (typeof url !== "string") return notFound;
+      if (url.includes("/v1/querybatch")) {
+        const { queries } = JSON.parse(init!.body!) as { queries: { version: string }[] };
+        return jsonResp({ results: queries.map((q) => ({ vulns: (advisoriesAt[q.version] ?? []).map((a) => ({ id: (a as { id: string }).id })) })) });
+      }
+      if (url.includes("/v1/query")) {
+        const { version } = JSON.parse(init!.body!) as { version: string };
+        return jsonResp({ vulns: advisoriesAt[version] ?? [] });
+      }
+      return notFound;
+    });
+  }
+
+  it("blocks a refresh whose new version is malware", async () => {
+    routeVet({ "2.0.0": [{ id: "MAL-2024-1", summary: "malicious code" }] });
+    const { blocked } = await vetNewVersions(policy, "npm", [{ name: "evil", from: "1.0.0", to: "2.0.0" }]);
+    expect(blocked).toEqual([{ name: "evil", version: "2.0.0", reason: "malware", ids: ["MAL-2024-1"] }]);
+  });
+
+  it("blocks a new version with a high/critical vulnerability", async () => {
+    routeVet({ "2.0.0": [{ id: "GHSA-hi", database_specific: { severity: "HIGH" } }] });
+    const { blocked } = await vetNewVersions(policy, "npm", [{ name: "highpkg", from: "1.0.0", to: "2.0.0" }]);
+    expect(blocked[0]).toMatchObject({ name: "highpkg", version: "2.0.0", reason: "vulnerability" });
+  });
+
+  it("warns (does not block) on a lower-severity advisory", async () => {
+    routeVet({ "2.0.0": [{ id: "GHSA-lo", database_specific: { severity: "LOW" } }] });
+    const { blocked, warnings } = await vetNewVersions(policy, "npm", [{ name: "lowpkg", from: "1.0.0", to: "2.0.0" }]);
+    expect(blocked).toEqual([]);
+    expect(warnings[0]).toContain("GHSA-lo");
+  });
+
+  it("passes a clean new version", async () => {
+    routeVet({});
+    const out = await vetNewVersions(policy, "npm", [{ name: "cleanpkg", from: "1.0.0", to: "2.0.0" }]);
+    expect(out).toEqual({ blocked: [], warnings: [] });
   });
 });

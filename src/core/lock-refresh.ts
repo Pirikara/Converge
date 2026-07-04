@@ -6,6 +6,7 @@ import type { Config } from "../config/schema.js";
 import type { EcosystemId } from "../adapters/types.js";
 import { parseLockfile } from "../audit/lockfiles.js";
 import { queryOsv, queryOsvBatch } from "../safety/osv.js";
+import { vulnDecision } from "../safety/gate.js";
 import { updateLockfileAll } from "../resolve/npm-cli.js";
 import { updatePnpmLockfileAll } from "../resolve/pnpm-cli.js";
 import { updateComposerAll } from "../resolve/composer-cli.js";
@@ -18,6 +19,14 @@ export interface LockChange {
   to: string;
 }
 
+/** A new version this refresh would pull in that the F2 gate rejects. */
+export interface RefreshBlock {
+  name: string;
+  version: string;
+  reason: "malware" | "vulnerability";
+  ids: string[];
+}
+
 export interface LockRefreshResult {
   ecosystem: EcosystemId;
   dir: string;
@@ -28,6 +37,11 @@ export interface LockRefreshResult {
   changed: LockChange[];
   /** Subset of `changed` where the bump moves off an OSV-affected version. */
   securityFixed: (LockChange & { ids: string[] })[];
+  /**
+   * New versions this refresh would introduce that the safety gate blocks
+   * (malware, or a high/critical vulnerability). Non-empty ⇒ do not open the PR.
+   */
+  blocked: RefreshBlock[];
   warnings: string[];
 }
 
@@ -186,6 +200,43 @@ export async function securityFixed(
   return fixed;
 }
 
+/**
+ * Vet the *new* versions a refresh would introduce against the F2 gate (same
+ * policy as routine updates): malware and high/critical vulnerabilities block
+ * the refresh; lesser advisories are surfaced as warnings. A lockfile is atomic,
+ * so a single blocked version rejects the whole refresh — Converge won't pull in
+ * malware just to keep other deps fresh.
+ */
+export async function vetNewVersions(
+  policy: Config["safety"],
+  ecosystem: EcosystemId,
+  changed: LockChange[],
+): Promise<{ blocked: RefreshBlock[]; warnings: string[] }> {
+  const osv = OSV_ECO[ecosystem];
+  if (!osv || changed.length === 0) return { blocked: [], warnings: [] };
+  const screen = await queryOsvBatch(osv, changed.map((c) => ({ name: c.name, version: osvVer(ecosystem, c.to) })));
+  const blocked: RefreshBlock[] = [];
+  const warnings: string[] = [];
+  for (let i = 0; i < changed.length; i++) {
+    if ((screen[i]?.length ?? 0) === 0) continue; // new version is clean
+    const c = changed[i]!;
+    const vulns = await queryOsv(osv, c.name, osvVer(ecosystem, c.to));
+    const blocking = vulns.filter((v) => vulnDecision(v, policy) === "block");
+    if (blocking.length > 0) {
+      blocked.push({
+        name: c.name,
+        version: c.to,
+        reason: blocking.some((v) => v.malware) ? "malware" : "vulnerability",
+        ids: blocking.map((v) => v.id),
+      });
+    } else {
+      const warn = vulns.filter((v) => vulnDecision(v, policy) === "warn");
+      if (warn.length > 0) warnings.push(`\`${c.name}@${c.to}\` introduces ${warn[0]!.severity} advisory ${warn.map((v) => v.id).join(", ")}`);
+    }
+  }
+  return { blocked, warnings };
+}
+
 async function paths(gh: GitHubClient, ref: RepoRef, base: string, lockName: string): Promise<string[]> {
   return gh.findManifestPaths(ref, base, lockName);
 }
@@ -225,6 +276,7 @@ export async function lockRefresh(
       const changed = diffLocks(lockName, old.content, newLock.content);
       if (changed.length === 0) continue;
       const prefix = dir === "." ? "" : `${dir}/`;
+      const vet = await vetNewVersions(config.safety, ecosystem, changed);
       out.push({
         ecosystem,
         dir,
@@ -232,7 +284,8 @@ export async function lockRefresh(
         files: r.files.map((f) => ({ path: `${prefix}${f.name}`, content: f.content })),
         changed,
         securityFixed: await securityFixed(ecosystem, changed),
-        warnings: r.warnings,
+        blocked: vet.blocked,
+        warnings: [...r.warnings, ...vet.warnings],
       });
     }
   };

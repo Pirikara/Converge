@@ -835,6 +835,14 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       process.stdout.write(
         `\n${pc.bold(`lockfile refresh: ${m.lockPath}`)} — ${m.changed.length} updated${sec} ${pc.dim(`(${m.ecosystem})`)}\n`,
       );
+      // Never open a refresh PR that would pull in malware or a high/critical
+      // vuln — a lockfile is atomic, so one bad new version blocks the refresh.
+      if (m.blocked.length > 0) {
+        for (const b of m.blocked) {
+          process.stdout.write(`  ${pc.red("⛔ blocked")} — would introduce ${b.reason} \`${b.name}@${b.version}\` (${b.ids.slice(0, 2).join(", ")})\n`);
+        }
+        continue;
+      }
       if (opts.apply) {
         try {
           await upsertPr(gh, ref, base, config.rebase, {

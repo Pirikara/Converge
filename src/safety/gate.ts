@@ -31,7 +31,7 @@ const defaultDeps: SafetyDeps = { queryOsv: realQueryOsv, now: () => Date.now() 
 
 type Policy = Config["safety"];
 
-function vulnDecision(v: OsvVuln, policy: Policy): SafetyDecision {
+export function vulnDecision(v: OsvVuln, policy: Policy): SafetyDecision {
   if (v.malware) return policy.onKnownMalware;
   // Introducing a high/critical vuln by upgrading is a block; lesser → warn.
   return v.severity === "critical" || v.severity === "high" ? "block" : "warn";
