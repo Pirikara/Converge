@@ -1,11 +1,50 @@
 import { execFile } from "node:child_process";
-import { readFile, access } from "node:fs/promises";
+import { readFile, access, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { ResolvedFile } from "./types.js";
 import { log } from "../logger.js";
 
 const execFileAsync = promisify(execFile);
+
+const GO_ENV = { GOFLAGS: "-mod=mod", GOTOOLCHAIN: "local" } as const;
+
+/** Extract a gzip'd repo tarball into `destDir`, dropping the top-level folder. */
+export async function extractTarballTo(tgz: Buffer, destDir: string): Promise<void> {
+  const tgzPath = path.join(destDir, ".src.tgz");
+  await writeFile(tgzPath, tgz);
+  // GitHub tarballs nest everything under `{owner}-{repo}-{sha}/` — strip it.
+  await execFileAsync("tar", ["-xzf", tgzPath, "-C", destDir, "--strip-components=1"], {
+    maxBuffer: 64 * 1024 * 1024,
+  });
+}
+
+/**
+ * Renovate-style resolution: `go get module@version` then `go mod tidy`, run in
+ * a directory that has the full module source, so go.sum is left in canonical
+ * (tidy) form. `tidy -e` keeps going despite non-fatal issues. Reads back the
+ * updated go.mod + go.sum. No package code is executed (module downloads only).
+ */
+export async function goGetAndTidy(
+  moduleDir: string,
+  modulePath: string,
+  version: string,
+): Promise<GoResolveResult> {
+  const env = { ...process.env, ...GO_ENV };
+  try {
+    await execFileAsync("go", ["get", `${modulePath}@${version}`], { cwd: moduleDir, maxBuffer: 32 * 1024 * 1024, env });
+    await execFileAsync("go", ["mod", "tidy", "-e"], { cwd: moduleDir, maxBuffer: 64 * 1024 * 1024, env });
+    const files: ResolvedFile[] = [];
+    const gomod = await readIfExists(moduleDir, "go.mod");
+    if (gomod) files.push(gomod);
+    const gosum = await readIfExists(moduleDir, "go.sum");
+    if (gosum) files.push(gosum);
+    return { ok: true, files, stderr: "" };
+  } catch (err) {
+    const e = err as { stderr?: string; stdout?: string };
+    return { ok: false, files: [], stderr: (e.stderr ?? e.stdout ?? String(err)).trim() };
+  }
+}
 
 export interface GoResolveResult {
   ok: boolean;

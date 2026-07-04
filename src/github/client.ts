@@ -52,6 +52,12 @@ export class GitHubClient {
     return data.default_branch;
   }
 
+  /** Download the repo source as a gzip'd tarball at a ref (for `go mod tidy`). */
+  async downloadTarball(ref: RepoRef, branch: string): Promise<Buffer> {
+    const { data } = await this.octokit.repos.downloadTarballArchive({ ...ref, ref: branch });
+    return Buffer.from(data as ArrayBuffer);
+  }
+
   /** Returns file text + blob sha at a ref, or null if absent. */
   async getFile(
     ref: RepoRef,

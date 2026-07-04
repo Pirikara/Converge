@@ -10,7 +10,7 @@ import { GitHubClient, type RepoRef } from "../github/client.js";
 import { resolvePipUpdate } from "../resolve/pip.js";
 import { uvLock } from "../resolve/uv-cli.js";
 import { editPyproject } from "../adapters/pyproject/parse.js";
-import { resolveGoModule } from "../resolve/go-cli.js";
+import { resolveGoModule, goGetAndTidy, extractTarballTo } from "../resolve/go-cli.js";
 import { resolveBundleLock } from "../resolve/ruby-cli.js";
 import { editGemfilePin } from "../adapters/rubygems/gemfile.js";
 import { runCargoUpdate } from "../resolve/cargo-cli.js";
@@ -147,26 +147,48 @@ async function resolveGo(
 ): Promise<CandidateResolution> {
   const dir = candidate.dir;
   const prefix = dir === "." ? "" : `${dir}/`;
+  const resolved = (r: { files: { name: string; content: string }[] }): CandidateResolution => ({
+    candidate,
+    status: "resolved",
+    changes: [{ name: candidate.name, fromRange: candidate.currentRange, toRange: candidate.latestVersion, cobump: false }],
+    repoFiles: r.files.map((f) => ({ path: `${prefix}${f.name}`, content: f.content })),
+    cobumps: 0,
+    warnings: [],
+  });
+
+  // Preferred (matches Renovate): fetch the full source and run `go get` +
+  // `go mod tidy`, which leaves go.sum in canonical form. Falls back to the
+  // metadata-only path (go.mod/go.sum via API + `go get`) if the source or tidy
+  // is unavailable, so we never regress to no PR.
   const workdir = await mkdtemp(path.join(tmpdir(), "converge-go-"));
   try {
-    const gomod = await gh.getFile(ref, `${prefix}go.mod`, base);
-    if (!gomod) throw new Error(`go.mod not found in ${dir}`);
-    await writeFile(path.join(workdir, "go.mod"), gomod.content);
-    const gosum = await gh.getFile(ref, `${prefix}go.sum`, base);
-    if (gosum) await writeFile(path.join(workdir, "go.sum"), gosum.content);
-
-    const r = await resolveGoModule(workdir, candidate.name, candidate.latestVersion, candidate.currentVersion ?? undefined);
-    if (!r.ok) {
-      return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: r.stderr.split("\n").slice(-4).join("\n") };
+    try {
+      const src = await gh.downloadTarball(ref, base);
+      await extractTarballTo(src, workdir);
+      const moduleDir = dir === "." ? workdir : path.join(workdir, dir);
+      await access(path.join(moduleDir, "go.mod"));
+      const r = await goGetAndTidy(moduleDir, candidate.name, candidate.latestVersion);
+      if (r.ok) return resolved(r);
+      log.debug(`go mod tidy failed, falling back: ${r.stderr.split("\n").slice(-2).join(" ")}`);
+    } catch (err) {
+      log.debug(`go source/tidy path unavailable, falling back: ${(err as Error).message}`);
     }
-    return {
-      candidate,
-      status: "resolved",
-      changes: [{ name: candidate.name, fromRange: candidate.currentRange, toRange: candidate.latestVersion, cobump: false }],
-      repoFiles: r.files.map((f) => ({ path: `${prefix}${f.name}`, content: f.content })),
-      cobumps: 0,
-      warnings: [],
-    };
+
+    const fbdir = await mkdtemp(path.join(tmpdir(), "converge-go-fb-"));
+    try {
+      const gomod = await gh.getFile(ref, `${prefix}go.mod`, base);
+      if (!gomod) throw new Error(`go.mod not found in ${dir}`);
+      await writeFile(path.join(fbdir, "go.mod"), gomod.content);
+      const gosum = await gh.getFile(ref, `${prefix}go.sum`, base);
+      if (gosum) await writeFile(path.join(fbdir, "go.sum"), gosum.content);
+      const r = await resolveGoModule(fbdir, candidate.name, candidate.latestVersion, candidate.currentVersion ?? undefined);
+      if (!r.ok) {
+        return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: r.stderr.split("\n").slice(-4).join("\n") };
+      }
+      return resolved(r);
+    } finally {
+      await cleanupWorkdir(fbdir);
+    }
   } finally {
     await cleanupWorkdir(workdir);
   }
