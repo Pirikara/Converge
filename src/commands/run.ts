@@ -317,10 +317,11 @@ async function openPrMaven(gh: GitHubClient, ref: RepoRef, base: string, res: Ca
 async function openPrComposer(gh: GitHubClient, ref: RepoRef, base: string, res: CandidateResolution, safety: SafetyVerdict, rebase: RebaseMode): Promise<void> {
   const c = res.candidate;
   const to = c.writeRange ?? c.latestVersion;
+  const lockUpdated = res.repoFiles.some((f) => f.path.endsWith("composer.lock"));
   await upsertPr(gh, ref, base, rebase, {
     branch: branchName(c),
     title: `bump ${c.name} from ${c.currentRange} to ${to}`,
-    body: renderComposerPrBody(c, safety),
+    body: renderComposerPrBody(c, safety, lockUpdated),
     files: res.repoFiles,
   });
 }

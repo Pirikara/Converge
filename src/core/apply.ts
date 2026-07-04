@@ -11,6 +11,7 @@ import { resolvePipUpdate } from "../resolve/pip.js";
 import { uvLock } from "../resolve/uv-cli.js";
 import { editPyproject } from "../adapters/pyproject/parse.js";
 import { resolveGoModule, goGetAndTidy, extractTarballTo } from "../resolve/go-cli.js";
+import { resolveComposerLock } from "../resolve/composer-cli.js";
 import { resolveBundleLock } from "../resolve/ruby-cli.js";
 import { editGemfilePin } from "../adapters/rubygems/gemfile.js";
 import { runCargoUpdate } from "../resolve/cargo-cli.js";
@@ -430,22 +431,54 @@ async function resolveComposer(
   base: string,
   candidate: UpdateCandidate,
 ): Promise<CandidateResolution> {
-  // No lockfile regen (Composer not run) — rewrite the constraint in composer.json.
   const file = await gh.getFile(ref, candidate.manifestPath, base);
   if (!file) throw new Error(`${candidate.manifestPath} not found`);
   const toRange = candidate.writeRange ?? candidate.latestVersion;
+  let edited: string;
   try {
-    const edited = editComposerConstraint(file.content, candidate.name, candidate.currentRange, toRange);
+    edited = editComposerConstraint(file.content, candidate.name, candidate.currentRange, toRange);
+  } catch (err) {
+    return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: (err as Error).message };
+  }
+
+  const dir = candidate.dir;
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const change = { name: candidate.name, fromRange: candidate.currentRange, toRange, cobump: false };
+  const editOnly = (warnings: string[] = []): CandidateResolution => ({
+    candidate,
+    status: "resolved",
+    changes: [change],
+    repoFiles: [{ path: candidate.manifestPath, content: edited }],
+    cobumps: 0,
+    warnings,
+  });
+
+  // Regenerate composer.lock (matches Renovate) so the bump is effective — the
+  // installed version, not just the constraint, moves. Falls back to editing
+  // composer.json only if there's no lock, composer is unavailable, or update
+  // fails. Runs code-free (`--no-scripts --no-plugins`, `--no-install`).
+  const lock = await gh.getFile(ref, `${prefix}composer.lock`, base);
+  if (!lock) return editOnly();
+
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-composer-"));
+  try {
+    await writeFile(path.join(workdir, "composer.json"), edited);
+    await writeFile(path.join(workdir, "composer.lock"), lock.content);
+    const r = await resolveComposerLock(workdir, candidate.name);
+    if (!r.ok) {
+      log.debug(`composer update failed, editing composer.json only: ${r.stderr.split("\n").slice(-2).join(" ")}`);
+      return editOnly([`composer.lock not regenerated — run \`composer update ${candidate.name}\``]);
+    }
     return {
       candidate,
       status: "resolved",
-      changes: [{ name: candidate.name, fromRange: candidate.currentRange, toRange, cobump: false }],
-      repoFiles: [{ path: candidate.manifestPath, content: edited }],
+      changes: [change],
+      repoFiles: r.files.map((f) => ({ path: `${prefix}${f.name}`, content: f.content })),
       cobumps: 0,
       warnings: [],
     };
-  } catch (err) {
-    return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: (err as Error).message };
+  } finally {
+    await cleanupWorkdir(workdir);
   }
 }
 

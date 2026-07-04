@@ -42,3 +42,15 @@ describe("edit-only PR bodies: security banner", () => {
     });
   }
 });
+
+describe("composer PR body: lockfile note", () => {
+  const c = candidate({ ecosystem: "composer", manifestPath: "composer.json", name: "guzzlehttp/guzzle" });
+  it("says the lock was regenerated when lockUpdated", () => {
+    const body = renderComposerPrBody(c, safe, true);
+    expect(body).toContain("`composer.lock` regenerated");
+    expect(body).not.toContain("run `composer update");
+  });
+  it("tells the user to run composer update when not", () => {
+    expect(renderComposerPrBody(c, safe, false)).toContain("run `composer update");
+  });
+});

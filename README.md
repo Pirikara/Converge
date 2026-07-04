@@ -45,7 +45,7 @@ declared version/constraint in the manifest (no toolchain required).
 | **RubyGems** | `Gemfile` | ✅ | lockfile — via `bundle lock` |
 | **Cargo** | `Cargo.toml` | ✅ | lockfile — via `cargo update` |
 | **NuGet** | `*.csproj`, `Directory.Packages.props` | ✅ | edit-only |
-| **Composer** | `composer.json` (+ `composer.lock` audit) | ✅ | edit-only |
+| **Composer** | `composer.json` (+ `composer.lock`) | ✅ | lockfile — via `composer update` (code-free) |
 | **Maven / Gradle** | `pom.xml`, `build.gradle(.kts)`, `libs.versions.toml` | ✅ | edit-only |
 | **GitHub Actions** | `.github/workflows/*.yml`, `action.yml` | ✅ | edit-only (incl. SHA-pinned refs) |
 | **Docker** | `Dockerfile`, `docker-compose.yml` | — | edit-only (base-image tags) |
@@ -64,9 +64,10 @@ they're scan-and-bump only. Yarn Classic (v1) is intentionally unsupported (depr
 - A **GitHub token** for `run` (PAT with `repo` scope, or `secrets.GITHUB_TOKEN` in Actions)
 - A toolchain **only for the lockfile-regenerating ecosystems you use**:
   - npm → bundled with Node; **pnpm / Yarn Berry** → `corepack` (bundled with Node); **bun** → `bun`
-  - pip → [`uv`](https://docs.astral.sh/uv/) · Go → `go` · RubyGems → `bundler` · Cargo → `cargo`
-  - The edit-only ecosystems (NuGet, Composer, Maven/Gradle, Actions, Docker, Terraform, Helm)
-    need **no toolchain** — Converge rewrites the manifest directly.
+  - pip → [`uv`](https://docs.astral.sh/uv/) · Go → `go` · RubyGems → `bundler` · Cargo → `cargo` · Composer → `composer`
+  - The edit-only ecosystems (NuGet, Maven/Gradle, Actions, Docker, Terraform, Helm)
+    need **no toolchain** — Converge rewrites the manifest directly. (Composer falls
+    back to manifest-only if `composer` isn't installed.)
 
 Converge runs these in metadata/lockfile-only modes, so packages are never built or executed.
 
@@ -255,8 +256,9 @@ Converge is early. Known gaps:
 - pip / RubyGems outdated detection acts on **exact pins** only (range floors need
   installed-version modelling from the lockfile).
 - npm has **iterative co-bump**; other lockfile ecosystems resolve directly (peer
-  conflicts in pnpm/yarn/bun are surfaced as warnings). Edit-only ecosystems don't
-  regenerate their lockfile — the PR notes when you should (e.g. `composer update`).
+  conflicts in pnpm/yarn/bun are surfaced as warnings). The remaining edit-only
+  ecosystems (NuGet, Maven/Gradle) don't regenerate their lockfile — the PR notes
+  when you should.
 - Maven `${property}` / parent / BOM-managed versions and Gradle catalog multi-line
   entries aren't bumped yet; Terraform/Helm resolve http(s) registries (not OCI).
 - Impact usage-mapping is best-effort (distribution name ≠ import name in some pip/Ruby cases).

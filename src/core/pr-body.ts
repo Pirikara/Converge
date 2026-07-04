@@ -221,7 +221,7 @@ export function renderNugetPrBody(c: UpdateCandidate, safety: SafetyVerdict): st
 }
 
 /** PR body for a Composer require constraint bump (OSV safety, no lockfile/impact). */
-export function renderComposerPrBody(c: UpdateCandidate, safety: SafetyVerdict): string {
+export function renderComposerPrBody(c: UpdateCandidate, safety: SafetyVerdict, lockUpdated = false): string {
   const to = c.writeRange ?? c.latestVersion;
   return [
     `## Converge: ${c.name} \`${c.currentRange}\` → \`${to}\``,
@@ -230,7 +230,9 @@ export function renderComposerPrBody(c: UpdateCandidate, safety: SafetyVerdict):
     "### 🎼 Composer",
     `- updates the \`${c.name}\` ${c.kind === "dev" ? "require-dev" : "require"} constraint in \`${c.manifestPath}\` (${c.updateType})`,
     `- \`${c.currentRange}\` → \`${to}\` (latest release: \`${c.latestVersion}\`)`,
-    "- ⚠️ run `composer update " + c.name + "` to refresh `composer.lock`",
+    lockUpdated
+      ? "- ✅ `composer.lock` regenerated (no packages installed, no scripts run)"
+      : "- ⚠️ run `composer update " + c.name + "` to refresh `composer.lock`",
     "",
     ...renderSafety(safety),
     "",
