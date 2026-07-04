@@ -9,6 +9,7 @@ import { queryOsv, queryOsvBatch } from "../safety/osv.js";
 import { vulnDecision } from "../safety/gate.js";
 import { resolveLockfile } from "../resolve/npm-cli.js";
 import { regeneratePnpmLockfile } from "../resolve/pnpm-cli.js";
+import { regenerateYarnLockfile } from "../resolve/yarn-cli.js";
 import { updateComposerAll } from "../resolve/composer-cli.js";
 import { updateCargoAll } from "../resolve/cargo-cli.js";
 import { updateBundleAll } from "../resolve/ruby-cli.js";
@@ -88,7 +89,11 @@ async function regenNpm(
     // latest version in each package.json range. Unlike `npm/pnpm update`, this
     // leaves the declared specifiers untouched, so the lockfile stays consistent
     // with package.json (--frozen-lockfile passes).
-    const r = lockName === "pnpm-lock.yaml" ? await regeneratePnpmLockfile(workdir) : await resolveLockfile(workdir);
+    const r = await (lockName === "pnpm-lock.yaml"
+      ? regeneratePnpmLockfile(workdir)
+      : lockName === "yarn.lock"
+        ? regenerateYarnLockfile(workdir)
+        : resolveLockfile(workdir));
     if (!r.ok) {
       log.debug(`lockfile refresh ${lockName} failed: ${r.stderr.split("\n").slice(-2).join(" ")}`);
       return null;
@@ -367,8 +372,9 @@ export async function lockRefresh(
   };
 
   if (enabled("npm")) {
-    await collect("npm", "package-lock.json", (dir) => regenNpm(gh, ref, base, dir, "package-lock.json"));
-    await collect("npm", "pnpm-lock.yaml", (dir) => regenNpm(gh, ref, base, dir, "pnpm-lock.yaml"));
+    for (const lock of ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"]) {
+      await collect("npm", lock, (dir) => regenNpm(gh, ref, base, dir, lock));
+    }
   }
   if (enabled("composer")) await collect("composer", "composer.lock", (dir) => regenComposer(gh, ref, base, dir));
   if (enabled("cargo")) await collect("cargo", "Cargo.lock", (dir) => regenCargo(gh, ref, base, dir));

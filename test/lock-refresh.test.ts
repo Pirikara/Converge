@@ -24,6 +24,11 @@ const gemfileLock = (specs: Record<string, string>) =>
   "\nPLATFORMS\n  ruby\n\nDEPENDENCIES\n";
 const uvLock = (pkgs: Record<string, string>) =>
   "version = 1\n" + Object.entries(pkgs).map(([n, v]) => `\n[[package]]\nname = "${n}"\nversion = "${v}"\n`).join("");
+const yarnLock = (pkgs: Record<string, string>) =>
+  "__metadata:\n  version: 8\n" +
+  Object.entries(pkgs)
+    .map(([n, v]) => `\n"${n}@npm:${v}":\n  version: ${v}\n  resolution: "${n}@npm:${v}"\n  languageName: node\n  linkType: hard\n`)
+    .join("");
 
 function result(over: Partial<LockRefreshResult> = {}): LockRefreshResult {
   return {
@@ -150,6 +155,15 @@ describe("diffLocks", () => {
       uvLock({ jinja2: "3.1.6", click: "8.1.0" }),
     );
     expect(changed).toEqual([{ name: "jinja2", from: "3.1.2", to: "3.1.6" }]);
+  });
+
+  it("reports yarn.lock package version changes", () => {
+    const changed = diffLocks(
+      "yarn.lock",
+      yarnLock({ "is-odd": "3.0.0", left: "1.0.0" }),
+      yarnLock({ "is-odd": "3.0.1", left: "1.0.0" }),
+    );
+    expect(changed).toEqual([{ name: "is-odd", from: "3.0.0", to: "3.0.1" }]);
   });
 });
 
