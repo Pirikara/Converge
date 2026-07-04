@@ -204,6 +204,11 @@ All 12 ecosystems are enabled by default; list one only to change it.
   // let this gate routine cadence. Security fixes ignore it (always proposed).
   // Empty (default) = any time. Example: only Monday mornings.
   "schedule": { "days": ["mon"], "hours": [6, 10] },
+  // Lockfile refresh (opt-in): regenerate lockfiles within the existing
+  // manifest ranges — no manifest change, no overrides — pulling transitive deps
+  // up to their latest allowed version. Catches in-range transitive security
+  // fixes (the PR flags which advisories it clears). npm/pnpm, Composer, Go.
+  "lockRefresh": { "enabled": true },
   "ecosystems": {
     "npm":    { "enabled": true, "directories": ["frontend/"] },
     "docker": { "enabled": false }   // opt an ecosystem out
@@ -245,7 +250,10 @@ lockfile, not just the manifest range) is affected by an OSV advisory, it bumps 
 fixed version — bypassing the update-type filter, the cooldown, and the `schedule`
 window. Covers **every OSV-indexed ecosystem** — npm, pip, Go, Cargo, RubyGems, NuGet,
 Composer, Maven/Gradle (`security.strategy`: `lowest` (default) | `highest`). Direct
-dependencies only; transitive vulns are surfaced by `audit`.
+dependencies (plus Go's `// indirect`). For **transitive** vulns, `audit` surfaces the
+whole tree, and **lockfile refresh** (below) pulls them up to the latest in-range
+version — no manifest overrides. A vuln that needs a parent bump to fix is reported, not
+forced (the same limit Renovate/Dependabot hit).
 
 ---
 

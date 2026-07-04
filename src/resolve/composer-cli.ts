@@ -28,23 +28,20 @@ async function readIfExists(dir: string, name: string): Promise<ResolvedFile | n
  *
  * Resolves from composer.json + composer.lock + Packagist — no PHP source is
  * needed. `--no-install` writes only the lock (no vendor download); `--no-scripts
- * --no-plugins --no-autoloader` mean no third-party code runs (same flags
- * Renovate uses). `--ignore-platform-reqs` avoids failing on runner-missing PHP
- * extensions.
+ * --no-plugins --no-autoloader` mean no third-party code runs.
+ * `--ignore-platform-reqs` avoids failing on runner-missing PHP extensions.
  */
-export async function resolveComposerLock(workdir: string, name: string): Promise<ComposerResolveResult> {
-  const args = [
-    "update",
-    name,
-    "--with-dependencies",
-    "--no-install",
-    "--no-scripts",
-    "--no-autoloader",
-    "--no-plugins",
-    "--no-interaction",
-    "--no-ansi",
-    "--ignore-platform-reqs",
-  ];
+const COMPOSER_FLAGS = [
+  "--no-install",
+  "--no-scripts",
+  "--no-autoloader",
+  "--no-plugins",
+  "--no-interaction",
+  "--no-ansi",
+  "--ignore-platform-reqs",
+];
+
+async function runComposer(workdir: string, args: string[]): Promise<ComposerResolveResult> {
   log.debug(`composer ${args.join(" ")} (cwd=${workdir})`);
   try {
     await execFileAsync("composer", args, {
@@ -62,4 +59,13 @@ export async function resolveComposerLock(workdir: string, name: string): Promis
     const e = err as { stderr?: string; stdout?: string };
     return { ok: false, files: [], stderr: (e.stderr ?? e.stdout ?? String(err)).trim() };
   }
+}
+
+export function resolveComposerLock(workdir: string, name: string): Promise<ComposerResolveResult> {
+  return runComposer(workdir, ["update", name, "--with-dependencies", ...COMPOSER_FLAGS]);
+}
+
+/** Lockfile refresh: `composer update` (all deps) within composer.json ranges. */
+export function updateComposerAll(workdir: string): Promise<ComposerResolveResult> {
+  return runComposer(workdir, ["update", ...COMPOSER_FLAGS]);
 }

@@ -118,6 +118,15 @@ export const ConfigSchema = z
         strategy: z.enum(["lowest", "highest"]).default("lowest"),
       })
       .default({}),
+    // Lockfile refresh: periodically regenerate each lockfile so transitive
+    // (and direct) dependencies move up to the latest versions *allowed by the
+    // existing manifest ranges* — no manifest change, no overrides. Picks up
+    // in-range transitive security fixes. Opt-in; runs in the routine window.
+    lockRefresh: z
+      .object({
+        enabled: z.boolean().default(false),
+      })
+      .default({}),
     safety: z
       .object({
         cooldownDays: z.number().int().min(0).default(3),

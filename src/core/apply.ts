@@ -157,8 +157,8 @@ async function resolveGo(
     warnings: [],
   });
 
-  // Preferred (matches Renovate): fetch the full source and run `go get` +
-  // `go mod tidy`, which leaves go.sum in canonical form. Falls back to the
+  // Preferred: fetch the full source and run `go get` + `go mod tidy`, which
+  // leaves go.sum in canonical form. Falls back to the
   // metadata-only path (go.mod/go.sum via API + `go get`) if the source or tidy
   // is unavailable, so we never regress to no PR.
   const workdir = await mkdtemp(path.join(tmpdir(), "converge-go-"));
@@ -453,7 +453,7 @@ async function resolveComposer(
     warnings,
   });
 
-  // Regenerate composer.lock (matches Renovate) so the bump is effective — the
+  // Regenerate composer.lock so the bump is effective — the
   // installed version, not just the constraint, moves. Falls back to editing
   // composer.json only if there's no lock, composer is unavailable, or update
   // fails. Runs code-free (`--no-scripts --no-plugins`, `--no-install`).

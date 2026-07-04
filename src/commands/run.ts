@@ -12,7 +12,8 @@ import { resolveCandidate, resolveGroup, type CandidateResolution, type GroupRes
 import { partitionGroups } from "../core/groups.js";
 import { securityCandidates } from "../core/security.js";
 import { isRoutineAllowed } from "../core/schedule.js";
-import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody, renderActionsPrBody, renderTerraformPrBody, renderNugetPrBody, renderComposerPrBody, renderHelmPrBody, renderMavenPrBody } from "../core/pr-body.js";
+import { lockRefresh } from "../core/lock-refresh.js";
+import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody, renderActionsPrBody, renderTerraformPrBody, renderNugetPrBody, renderComposerPrBody, renderHelmPrBody, renderMavenPrBody, renderLockRefreshPrBody } from "../core/pr-body.js";
 import { evaluateSafety } from "../safety/gate.js";
 import { provenanceStatus } from "../safety/provenance.js";
 import type { SafetyVerdict } from "../safety/types.js";
@@ -821,6 +822,30 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
         await openPr(gh, ref, base, res, verdict, impact, deprecation, introduced, config.rebase);
       } catch (err) {
         log.error(`${candidate.name}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  // Lockfile refresh: regenerate lockfiles within existing ranges (routine
+  // cadence). Opt-in; picks up in-range transitive fixes without overrides.
+  if (config.lockRefresh.enabled && routineAllowed) {
+    const maint = await lockRefresh(gh, ref, config, base);
+    for (const m of maint) {
+      const sec = m.securityFixed.length > 0 ? pc.red(` 🔒 fixes ${m.securityFixed.length}`) : "";
+      process.stdout.write(
+        `\n${pc.bold(`lockfile refresh: ${m.lockPath}`)} — ${m.changed.length} updated${sec} ${pc.dim(`(${m.ecosystem})`)}\n`,
+      );
+      if (opts.apply) {
+        try {
+          await upsertPr(gh, ref, base, config.rebase, {
+            branch: `converge/lock-refresh/${m.lockPath.replace(/[/.]/g, "-")}`,
+            title: `Lockfile refresh (${m.lockPath})`,
+            body: renderLockRefreshPrBody(m),
+            files: m.files,
+          });
+        } catch (err) {
+          log.error(`lockfile refresh ${m.lockPath}: ${(err as Error).message}`);
+        }
       }
     }
   }

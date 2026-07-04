@@ -4,6 +4,7 @@ import type { ImpactReport } from "../impact/analyze.js";
 import type { DeprecationFinding } from "../deprecation/detect.js";
 import type { CandidateResolution } from "./apply.js";
 import type { AuditFinding } from "../audit/audit.js";
+import type { LockRefreshResult } from "./lock-refresh.js";
 
 function renderIntroduced(introduced: AuditFinding[]): string[] {
   const lines = ["### 🌳 Transitive impact (F2)"];
@@ -281,6 +282,37 @@ export function renderMavenPrBody(c: UpdateCandidate, safety: SafetyVerdict): st
     "---",
     `🤖 Generated with [Converge](${CONVERGE_URL})`,
   ].join("\n");
+}
+
+/** PR body for lockfile refresh — regenerated within existing ranges. */
+export function renderLockRefreshPrBody(r: LockRefreshResult): string {
+  const lines = [
+    `## Converge: lockfile refresh — \`${r.lockPath}\``,
+    "",
+    "### 🔧 Lockfile refresh",
+    `- regenerated \`${r.lockPath}\` within the existing manifest ranges — **no manifest change, no overrides**`,
+    `- ${r.changed.length} package(s) moved up to the latest allowed version`,
+    "",
+  ];
+  if (r.securityFixed.length > 0) {
+    lines.push(`### 🔒 Fixes ${r.securityFixed.length} known vulnerabilit${r.securityFixed.length === 1 ? "y" : "ies"}`);
+    for (const f of r.securityFixed) {
+      const ids = f.ids
+        .map((id) => (/^(GHSA|CVE|GO|MAL)-/i.test(id) ? `[${id}](https://osv.dev/vulnerability/${id})` : id))
+        .join(", ");
+      lines.push(`- \`${f.name}\` ${f.from} → ${f.to} — ${ids}`);
+    }
+    lines.push("");
+  }
+  const shown = r.changed.slice(0, 20);
+  lines.push("### Updated packages" + (r.changed.length > shown.length ? ` (first ${shown.length} of ${r.changed.length})` : ""));
+  for (const c of shown) lines.push(`- \`${c.name}\` ${c.from} → ${c.to}`);
+  if (r.warnings.length > 0) {
+    lines.push("", "### Warnings");
+    for (const w of r.warnings.slice(0, 10)) lines.push(`- ${w}`);
+  }
+  lines.push("", "---", `🤖 Generated with [Converge](${CONVERGE_URL})`);
+  return lines.join("\n");
 }
 
 /** PR body for a Terraform provider/module constraint bump (scan-only). */

@@ -45,8 +45,21 @@ async function pnpmCommand(workdir: string): Promise<string[]> {
  * rather than errors, so we resolve and report the warnings.
  */
 export async function regeneratePnpmLockfile(workdir: string): Promise<PnpmRunResult> {
+  return runPnpm(workdir, "install");
+}
+
+/**
+ * Lockfile refresh: `pnpm update` moves every dependency up to the latest
+ * version allowed by package.json's ranges (no manifest change), writing only
+ * the lockfile — picking up in-range transitive fixes.
+ */
+export async function updatePnpmLockfileAll(workdir: string): Promise<PnpmRunResult> {
+  return runPnpm(workdir, "update");
+}
+
+async function runPnpm(workdir: string, verb: "install" | "update"): Promise<PnpmRunResult> {
   const [cmd, ...pre] = await pnpmCommand(workdir);
-  const args = [...pre, "install", "--lockfile-only", "--ignore-scripts", "--no-color"];
+  const args = [...pre, verb, "--lockfile-only", "--ignore-scripts", "--no-color"];
   log.debug(`${cmd} ${args.join(" ")} (cwd=${workdir})`);
   try {
     const { stdout, stderr } = await execFileAsync(cmd!, args, {

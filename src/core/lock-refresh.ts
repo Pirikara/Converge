@@ -1,0 +1,248 @@
+import { mkdtemp, writeFile, readFile, access, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { GitHubClient, type RepoRef } from "../github/client.js";
+import type { Config } from "../config/schema.js";
+import type { EcosystemId } from "../adapters/types.js";
+import { parseLockfile } from "../audit/lockfiles.js";
+import { queryOsv, queryOsvBatch } from "../safety/osv.js";
+import { updateLockfileAll } from "../resolve/npm-cli.js";
+import { updatePnpmLockfileAll } from "../resolve/pnpm-cli.js";
+import { updateComposerAll } from "../resolve/composer-cli.js";
+import { goUpdateAll, extractTarballTo } from "../resolve/go-cli.js";
+import { log } from "../logger.js";
+
+export interface LockChange {
+  name: string;
+  from: string;
+  to: string;
+}
+
+export interface LockRefreshResult {
+  ecosystem: EcosystemId;
+  dir: string;
+  /** The lockfile this refresh PR represents (repo-relative). */
+  lockPath: string;
+  /** Files to commit (the lockfile, plus go.mod for Go). */
+  files: { path: string; content: string }[];
+  changed: LockChange[];
+  /** Subset of `changed` where the bump moves off an OSV-affected version. */
+  securityFixed: (LockChange & { ids: string[] })[];
+  warnings: string[];
+}
+
+const OSV_ECO: Partial<Record<EcosystemId, string>> = { npm: "npm", composer: "Packagist", gomod: "Go" };
+const osvVer = (eco: EcosystemId, v: string): string => (eco === "gomod" ? v.replace(/^v/, "") : v);
+
+/** Regenerated files for one lockfile, or null if unavailable / failed / unchanged. */
+type Regen = { files: { name: string; content: string }[]; warnings: string[] } | null;
+
+async function cleanup(dir: string): Promise<void> {
+  await rm(dir, { recursive: true, force: true }).catch(() => {});
+}
+
+async function readFileIf(dir: string, name: string): Promise<string | null> {
+  try {
+    await access(path.join(dir, name));
+    return await readFile(path.join(dir, name), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** npm/pnpm: seed manifest + lockfile, run the PM's within-range update. */
+async function regenNpm(
+  gh: GitHubClient,
+  ref: RepoRef,
+  base: string,
+  dir: string,
+  lockName: string,
+): Promise<Regen> {
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const pkg = await gh.getFile(ref, `${prefix}package.json`, base);
+  if (!pkg) return null;
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-lm-npm-"));
+  try {
+    await writeFile(path.join(workdir, "package.json"), pkg.content);
+    const lock = await gh.getFile(ref, `${prefix}${lockName}`, base);
+    if (!lock) return null;
+    await writeFile(path.join(workdir, lockName), lock.content);
+    const r = lockName === "pnpm-lock.yaml" ? await updatePnpmLockfileAll(workdir) : await updateLockfileAll(workdir);
+    if (!r.ok) {
+      log.debug(`lockfile refresh ${lockName} failed: ${r.stderr.split("\n").slice(-2).join(" ")}`);
+      return null;
+    }
+    const content = await readFileIf(workdir, lockName);
+    if (content == null) return null;
+    return { files: [{ name: lockName, content }], warnings: "warnings" in r ? r.warnings : [] };
+  } finally {
+    await cleanup(workdir);
+  }
+}
+
+/** composer: `composer update` (all) within composer.json ranges. */
+async function regenComposer(gh: GitHubClient, ref: RepoRef, base: string, dir: string): Promise<Regen> {
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const cj = await gh.getFile(ref, `${prefix}composer.json`, base);
+  const cl = await gh.getFile(ref, `${prefix}composer.lock`, base);
+  if (!cj || !cl) return null;
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-lm-composer-"));
+  try {
+    await writeFile(path.join(workdir, "composer.json"), cj.content);
+    await writeFile(path.join(workdir, "composer.lock"), cl.content);
+    const r = await updateComposerAll(workdir);
+    if (!r.ok) {
+      log.debug(`lockfile refresh composer failed: ${r.stderr.split("\n").slice(-2).join(" ")}`);
+      return null;
+    }
+    const content = await readFileIf(workdir, "composer.lock");
+    if (content == null) return null;
+    return { files: [{ name: "composer.lock", content }], warnings: [] };
+  } finally {
+    await cleanup(workdir);
+  }
+}
+
+/** Go: fetch source, `go get -u ./...` + `go mod tidy` (needs the module source). */
+async function regenGo(gh: GitHubClient, ref: RepoRef, base: string, dir: string): Promise<Regen> {
+  const workdir = await mkdtemp(path.join(tmpdir(), "converge-lm-go-"));
+  try {
+    const src = await gh.downloadTarball(ref, base);
+    await extractTarballTo(src, workdir);
+    const moduleDir = dir === "." ? workdir : path.join(workdir, dir);
+    await access(path.join(moduleDir, "go.mod"));
+    const r = await goUpdateAll(moduleDir);
+    if (!r.ok) {
+      log.debug(`lockfile refresh go failed: ${r.stderr.split("\n").slice(-2).join(" ")}`);
+      return null;
+    }
+    return { files: r.files, warnings: [] };
+  } catch (err) {
+    log.debug(`lockfile refresh go unavailable: ${(err as Error).message}`);
+    return null;
+  } finally {
+    await cleanup(workdir);
+  }
+}
+
+function highest(versions: string[]): string {
+  return [...versions].sort((a, b) => {
+    const pa = a.split(/[.+-]/).map((n) => parseInt(n, 10));
+    const pb = b.split(/[.+-]/).map((n) => parseInt(n, 10));
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d) return d;
+    }
+    return a.localeCompare(b);
+  })[versions.length - 1]!;
+}
+
+function versionsByName(lockName: string, content: string): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const p of parseLockfile(lockName, content)?.packages ?? []) {
+    const arr = m.get(p.name) ?? [];
+    arr.push(p.version);
+    m.set(p.name, arr);
+  }
+  return m;
+}
+
+/** Packages whose locked version set changed (present in both old and new). */
+function diffLocks(lockName: string, oldC: string, newC: string): LockChange[] {
+  const oldM = versionsByName(lockName, oldC);
+  const newM = versionsByName(lockName, newC);
+  const changed: LockChange[] = [];
+  for (const [name, newVers] of newM) {
+    const oldVers = oldM.get(name);
+    if (!oldVers) continue;
+    const newSet = new Set(newVers);
+    const same = oldVers.length === newVers.length && oldVers.every((v) => newSet.has(v));
+    if (same) continue;
+    const from = highest(oldVers);
+    const to = highest(newVers);
+    if (from !== to) changed.push({ name, from, to });
+  }
+  return changed;
+}
+
+/** Which of the changed packages moved off an OSV-affected version. */
+async function securityFixed(
+  ecosystem: EcosystemId,
+  changed: LockChange[],
+): Promise<(LockChange & { ids: string[] })[]> {
+  const osv = OSV_ECO[ecosystem];
+  if (!osv || changed.length === 0) return [];
+  const screen = await queryOsvBatch(osv, changed.map((c) => ({ name: c.name, version: osvVer(ecosystem, c.from) })));
+  const fixed: (LockChange & { ids: string[] })[] = [];
+  for (let i = 0; i < changed.length; i++) {
+    if ((screen[i]?.length ?? 0) === 0) continue; // old version wasn't affected
+    const c = changed[i]!;
+    const before = new Set((await queryOsv(osv, c.name, osvVer(ecosystem, c.from))).flatMap((v) => [v.id, ...v.aliases]));
+    if (before.size === 0) continue;
+    const after = new Set((await queryOsv(osv, c.name, osvVer(ecosystem, c.to))).flatMap((v) => [v.id, ...v.aliases]));
+    const resolved = [...before].filter((id) => !after.has(id));
+    if (resolved.length > 0) fixed.push({ ...c, ids: resolved });
+  }
+  return fixed;
+}
+
+async function paths(gh: GitHubClient, ref: RepoRef, base: string, lockName: string): Promise<string[]> {
+  return gh.findManifestPaths(ref, base, lockName);
+}
+
+/**
+ * Lockfile refresh: for each lockfile, regenerate it so dependencies
+ * move up to the latest versions allowed by the manifest ranges — no manifest
+ * edits, no overrides — and report what changed and which OSV advisories that
+ * clears. One result per lockfile. v1 covers npm/pnpm, Composer, and Go.
+ */
+export async function lockRefresh(
+  gh: GitHubClient,
+  ref: RepoRef,
+  config: Config,
+  base: string,
+): Promise<LockRefreshResult[]> {
+  if (!config.lockRefresh.enabled) return [];
+  const out: LockRefreshResult[] = [];
+
+  const enabled = (eco: EcosystemId): boolean => config.ecosystems[eco]?.enabled ?? false;
+
+  const dirOf = (lockPath: string): string => (path.posix.dirname(lockPath) === "." ? "." : path.posix.dirname(lockPath));
+
+  const collect = async (
+    ecosystem: EcosystemId,
+    lockName: string,
+    regen: (dir: string) => Promise<Regen>,
+  ): Promise<void> => {
+    for (const lockPath of await paths(gh, ref, base, lockName)) {
+      const dir = dirOf(lockPath);
+      const old = await gh.getFile(ref, lockPath, base);
+      if (!old) continue;
+      const r = await regen(dir);
+      if (!r) continue;
+      const newLock = r.files.find((f) => f.name === lockName);
+      if (!newLock || newLock.content === old.content) continue;
+      const changed = diffLocks(lockName, old.content, newLock.content);
+      if (changed.length === 0) continue;
+      const prefix = dir === "." ? "" : `${dir}/`;
+      out.push({
+        ecosystem,
+        dir,
+        lockPath,
+        files: r.files.map((f) => ({ path: `${prefix}${f.name}`, content: f.content })),
+        changed,
+        securityFixed: await securityFixed(ecosystem, changed),
+        warnings: r.warnings,
+      });
+    }
+  };
+
+  if (enabled("npm")) {
+    await collect("npm", "package-lock.json", (dir) => regenNpm(gh, ref, base, dir, "package-lock.json"));
+    await collect("npm", "pnpm-lock.yaml", (dir) => regenNpm(gh, ref, base, dir, "pnpm-lock.yaml"));
+  }
+  if (enabled("composer")) await collect("composer", "composer.lock", (dir) => regenComposer(gh, ref, base, dir));
+  if (enabled("gomod")) await collect("gomod", "go.sum", (dir) => regenGo(gh, ref, base, dir));
+
+  return out;
+}

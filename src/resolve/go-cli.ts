@@ -20,8 +20,8 @@ export async function extractTarballTo(tgz: Buffer, destDir: string): Promise<vo
 }
 
 /**
- * Renovate-style resolution: `go get module@version` then `go mod tidy`, run in
- * a directory that has the full module source, so go.sum is left in canonical
+ * Canonical resolution: `go get module@version` then `go mod tidy`, run in a
+ * directory that has the full module source, so go.sum is left in canonical
  * (tidy) form. `tidy -e` keeps going despite non-fatal issues. Reads back the
  * updated go.mod + go.sum. No package code is executed (module downloads only).
  */
@@ -30,9 +30,18 @@ export async function goGetAndTidy(
   modulePath: string,
   version: string,
 ): Promise<GoResolveResult> {
+  return goInModule(moduleDir, ["get", `${modulePath}@${version}`]);
+}
+
+/** Lockfile refresh: `go get -u ./...` bumps all deps to latest, then tidy. */
+export async function goUpdateAll(moduleDir: string): Promise<GoResolveResult> {
+  return goInModule(moduleDir, ["get", "-u", "./..."]);
+}
+
+async function goInModule(moduleDir: string, getArgs: string[]): Promise<GoResolveResult> {
   const env = { ...process.env, ...GO_ENV };
   try {
-    await execFileAsync("go", ["get", `${modulePath}@${version}`], { cwd: moduleDir, maxBuffer: 32 * 1024 * 1024, env });
+    await execFileAsync("go", getArgs, { cwd: moduleDir, maxBuffer: 32 * 1024 * 1024, env });
     await execFileAsync("go", ["mod", "tidy", "-e"], { cwd: moduleDir, maxBuffer: 64 * 1024 * 1024, env });
     const files: ResolvedFile[] = [];
     const gomod = await readIfExists(moduleDir, "go.mod");
