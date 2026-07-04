@@ -13,6 +13,24 @@ export interface GoResolveResult {
   stderr: string;
 }
 
+/**
+ * `go get m@new` records the new version's hashes but does not remove the old
+ * version's *zip* hash (that pruning is `go mod tidy`'s job, which needs the
+ * source tree). Once `new` is selected, `old`'s zip is never used, so its
+ * `m old h1:…` line is dead weight. Drop only that line — the `m old/go.mod`
+ * hash may still be required for module-graph (MVS) computation, so it stays.
+ * Guarded: only prune when the new version's zip line is present.
+ */
+export function pruneStaleZipHash(gosum: string, module: string, oldVersion: string, newVersion: string): string {
+  const newZip = `${module} ${newVersion} `;
+  if (!gosum.split("\n").some((l) => l.startsWith(newZip))) return gosum;
+  const oldZip = `${module} ${oldVersion} `; // trailing space ⇒ the zip line, not `…/go.mod`
+  return gosum
+    .split("\n")
+    .filter((l) => !l.startsWith(oldZip))
+    .join("\n");
+}
+
 async function readIfExists(dir: string, name: string): Promise<ResolvedFile | null> {
   try {
     await access(path.join(dir, name));
@@ -32,6 +50,7 @@ export async function resolveGoModule(
   workdir: string,
   modulePath: string,
   version: string,
+  previousVersion?: string,
 ): Promise<GoResolveResult> {
   const args = ["get", `${modulePath}@${version}`];
   log.debug(`go ${args.join(" ")} (cwd=${workdir})`);
@@ -45,7 +64,12 @@ export async function resolveGoModule(
     const gomod = await readIfExists(workdir, "go.mod");
     if (gomod) files.push(gomod);
     const gosum = await readIfExists(workdir, "go.sum");
-    if (gosum) files.push(gosum);
+    if (gosum) {
+      if (previousVersion && previousVersion !== version) {
+        gosum.content = pruneStaleZipHash(gosum.content, modulePath, previousVersion, version);
+      }
+      files.push(gosum);
+    }
     return { ok: true, files, stderr: "" };
   } catch (err) {
     const e = err as { stderr?: string; stdout?: string };

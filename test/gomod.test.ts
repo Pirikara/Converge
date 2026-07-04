@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { parseGoMod } from "../src/adapters/gomod/gomod.js";
 import { escapeModulePath } from "../src/adapters/gomod/proxy.js";
 import { GoAdapter } from "../src/adapters/gomod/index.js";
+import { pruneStaleZipHash } from "../src/resolve/go-cli.js";
 
 const GOMOD = `module example.com/me
 
@@ -70,5 +71,37 @@ describe("GoAdapter.listOutdated", () => {
     expect(out[0]!.currentVersion).toBe("v0.9.0");
     expect(out[0]!.latestVersion).toBe("v0.9.1");
     expect(out[0]!.updateType).toBe("patch");
+  });
+});
+
+describe("pruneStaleZipHash", () => {
+  const m = "golang.org/x/sys";
+  const before = [
+    `${m} v0.42.0 h1:OLDZIP=`,
+    `${m} v0.42.0/go.mod h1:SHARED=`,
+    `${m} v0.44.0 h1:NEWZIP=`,
+    `${m} v0.44.0/go.mod h1:SHARED=`,
+    "example.com/other v1.0.0 h1:X=",
+    "",
+  ].join("\n");
+
+  it("drops only the old version's zip line, keeping its go.mod hash", () => {
+    const out = pruneStaleZipHash(before, m, "v0.42.0", "v0.44.0");
+    expect(out).not.toContain(`${m} v0.42.0 h1:OLDZIP=`);
+    expect(out).toContain(`${m} v0.42.0/go.mod h1:SHARED=`); // MVS may still need it
+    expect(out).toContain(`${m} v0.44.0 h1:NEWZIP=`);
+    expect(out).toContain("example.com/other v1.0.0 h1:X="); // untouched
+  });
+
+  it("is a no-op when the new version's zip line is absent (guard)", () => {
+    const noNew = `${m} v0.42.0 h1:OLDZIP=\n${m} v0.42.0/go.mod h1:S=\n`;
+    expect(pruneStaleZipHash(noNew, m, "v0.42.0", "v0.44.0")).toBe(noNew);
+  });
+
+  it("does not touch a different module at the same version", () => {
+    const s = `other/x v0.42.0 h1:KEEP=\n${m} v0.42.0 h1:OLD=\n${m} v0.44.0 h1:NEW=\n`;
+    const out = pruneStaleZipHash(s, m, "v0.42.0", "v0.44.0");
+    expect(out).toContain("other/x v0.42.0 h1:KEEP=");
+    expect(out).not.toContain(`${m} v0.42.0 h1:OLD=`);
   });
 });

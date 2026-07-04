@@ -155,7 +155,7 @@ async function resolveGo(
     const gosum = await gh.getFile(ref, `${prefix}go.sum`, base);
     if (gosum) await writeFile(path.join(workdir, "go.sum"), gosum.content);
 
-    const r = await resolveGoModule(workdir, candidate.name, candidate.latestVersion);
+    const r = await resolveGoModule(workdir, candidate.name, candidate.latestVersion, candidate.currentVersion ?? undefined);
     if (!r.ok) {
       return { candidate, status: "unsolvable", changes: [], repoFiles: [], cobumps: 0, warnings: [], reason: r.stderr.split("\n").slice(-4).join("\n") };
     }
