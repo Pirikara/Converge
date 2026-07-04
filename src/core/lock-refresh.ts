@@ -7,8 +7,8 @@ import type { EcosystemId } from "../adapters/types.js";
 import { parseLockfile } from "../audit/lockfiles.js";
 import { queryOsv, queryOsvBatch } from "../safety/osv.js";
 import { vulnDecision } from "../safety/gate.js";
-import { updateLockfileAll } from "../resolve/npm-cli.js";
-import { updatePnpmLockfileAll } from "../resolve/pnpm-cli.js";
+import { resolveLockfile } from "../resolve/npm-cli.js";
+import { regeneratePnpmLockfile } from "../resolve/pnpm-cli.js";
 import { updateComposerAll } from "../resolve/composer-cli.js";
 import { goUpdateAll, extractTarballTo } from "../resolve/go-cli.js";
 import { log } from "../logger.js";
@@ -75,13 +75,17 @@ async function regenNpm(
   const prefix = dir === "." ? "" : `${dir}/`;
   const pkg = await gh.getFile(ref, `${prefix}package.json`, base);
   if (!pkg) return null;
+  // Only maintain repos that already have this lockfile.
+  const existing = await gh.getFile(ref, `${prefix}${lockName}`, base);
+  if (!existing) return null;
   const workdir = await mkdtemp(path.join(tmpdir(), "converge-lm-npm-"));
   try {
     await writeFile(path.join(workdir, "package.json"), pkg.content);
-    const lock = await gh.getFile(ref, `${prefix}${lockName}`, base);
-    if (!lock) return null;
-    await writeFile(path.join(workdir, lockName), lock.content);
-    const r = lockName === "pnpm-lock.yaml" ? await updatePnpmLockfileAll(workdir) : await updateLockfileAll(workdir);
+    // Regenerate WITHOUT seeding the old lockfile: a fresh resolve picks the
+    // latest version in each package.json range. Unlike `npm/pnpm update`, this
+    // leaves the declared specifiers untouched, so the lockfile stays consistent
+    // with package.json (--frozen-lockfile passes).
+    const r = lockName === "pnpm-lock.yaml" ? await regeneratePnpmLockfile(workdir) : await resolveLockfile(workdir);
     if (!r.ok) {
       log.debug(`lockfile refresh ${lockName} failed: ${r.stderr.split("\n").slice(-2).join(" ")}`);
       return null;

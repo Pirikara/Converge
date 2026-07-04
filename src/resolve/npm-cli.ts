@@ -22,20 +22,7 @@ export interface NpmRunResult {
  * exactly like a real install would, but with zero arbitrary code execution.
  */
 export async function resolveLockfile(dir: string): Promise<NpmRunResult> {
-  return runNpm(dir, "install");
-}
-
-/**
- * Lockfile refresh: `npm update` moves every dependency up to the latest
- * version allowed by package.json's ranges (no manifest change), writing only
- * the lockfile — picking up in-range transitive fixes.
- */
-export async function updateLockfileAll(dir: string): Promise<NpmRunResult> {
-  return runNpm(dir, "update");
-}
-
-async function runNpm(dir: string, verb: "install" | "update"): Promise<NpmRunResult> {
-  const args = [verb, "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"];
+  const args = ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"];
   log.debug(`npm ${args.join(" ")} (cwd=${dir})`);
   try {
     const { stdout, stderr } = await execFileAsync("npm", args, {
