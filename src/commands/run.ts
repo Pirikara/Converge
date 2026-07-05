@@ -15,6 +15,7 @@ import { isRoutineAllowed } from "../core/schedule.js";
 import { lockRefresh } from "../core/lock-refresh.js";
 import { renderPrBody, renderPrTitle, renderDockerPrBody, renderGroupPrBody, renderActionsPrBody, renderTerraformPrBody, renderNugetPrBody, renderComposerPrBody, renderHelmPrBody, renderMavenPrBody, renderLockRefreshPrBody } from "../core/pr-body.js";
 import { evaluateSafety } from "../safety/gate.js";
+import { maturedTarget } from "../core/cooldown.js";
 import { provenanceStatus } from "../safety/provenance.js";
 import type { SafetyVerdict } from "../safety/types.js";
 import { analyzeImpact, type ImpactReport } from "../impact/analyze.js";
@@ -475,8 +476,19 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       { staleDays: STALE_DAYS, now: Date.now() },
     );
 
-  const safetyOf = (c: UpdateCandidate, meta: PackageMeta) =>
-    evaluateSafety(
+  const safetyOf = (c: UpdateCandidate, meta: PackageMeta) => {
+    // Cooldown as maturity selection: step the target down to the newest matured
+    // version before gating, so a fresh release delays (not blocks) the update —
+    // matching npm/pnpm/yarn, Dependabot, and Renovate. Security fixes are exempt
+    // (handled inside maturedTarget). Mutates the candidate so the PR + apply use
+    // the matured version.
+    const mt = maturedTarget(c, meta, config.safety, Date.now());
+    if (mt) {
+      log.debug(`cooldown: ${c.name} target ${c.latestVersion} too fresh → matured ${mt.latestVersion}`);
+      c.latestVersion = mt.latestVersion;
+      c.updateType = mt.updateType;
+    }
+    return evaluateSafety(
       {
         ecosystem: OSV_ECOSYSTEM[c.ecosystem],
         name: c.name,
@@ -489,6 +501,7 @@ export async function runRun(repoInput: string, opts: RunOptions): Promise<numbe
       },
       config.safety,
     );
+  };
 
   // Grouping (F1): bundle configured deps in the same ecosystem+dir into one PR.
   const { groups, individual } = partitionGroups(candidates, config.groups);

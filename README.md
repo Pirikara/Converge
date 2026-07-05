@@ -238,7 +238,10 @@ Evaluated **before** resolution, so dangerous versions are never installed:
 - **Known malware / vulnerabilities** via [OSV.dev](https://osv.dev) — malware is detected
   from `MAL-*` advisories, GitHub-reviewed malware advisories, and malware CWEs. Known
   malware is blocked; high/critical vulnerabilities block, lower ones warn.
-- **Cooldown** — freshly published versions are held for `cooldownDays` (anti-supply-chain).
+- **Cooldown** — a version younger than `cooldownDays` isn't adopted; instead the update
+  steps down to the newest version that's old enough (matched to how npm/pnpm/yarn,
+  Dependabot, and Renovate apply cooldown). Security fixes bypass it. Anti-supply-chain:
+  gives freshly published (possibly compromised) releases time to be flagged.
 - **Provenance downgrade** — if a package had npm provenance and the target version drops
   it, that's treated as suspicious (possible hijacked publish).
 - **Allowlist** — explicit `pkg@version` entries override the gate.
