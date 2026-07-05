@@ -208,7 +208,9 @@ All 12 ecosystems are enabled by default; list one only to change it.
   // manifest ranges — no manifest change, no overrides — pulling transitive deps
   // up to their latest allowed version. Catches in-range transitive security
   // fixes (the PR flags which advisories it clears). npm/pnpm/Yarn/bun,
-  // Composer, Go, Cargo, RubyGems, pip (uv.lock).
+  // Composer, Go, Cargo, RubyGems, pip (uv.lock). `cooldownDays` is delegated to
+  // each package manager's native cooldown here (npm/pnpm/Yarn, uv, Bundler);
+  // Cargo/Composer/Go have no native support yet, so they refresh to latest.
   "lockRefresh": { "enabled": true },
   "ecosystems": {
     "npm":    { "enabled": true, "directories": ["frontend/"] },

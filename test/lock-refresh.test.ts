@@ -1,7 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderLockRefreshPrBody } from "../src/core/pr-body.js";
-import { diffLocks, highest, securityFixed, vetNewVersions, type LockRefreshResult } from "../src/core/lock-refresh.js";
+import { diffLocks, highest, securityFixed, vetNewVersions, applyCooldownEnv, type LockRefreshResult } from "../src/core/lock-refresh.js";
 import { ConfigSchema } from "../src/config/schema.js";
+
+describe("applyCooldownEnv (delegate cooldown to native PM env)", () => {
+  it("is a no-op when cooldownDays is 0", () => {
+    const restore = applyCooldownEnv(0);
+    expect(process.env.npm_config_before).toBeUndefined();
+    expect(process.env.UV_EXCLUDE_NEWER).toBeUndefined();
+    restore();
+  });
+
+  it("sets each PM's cooldown env, then restores prior values", () => {
+    process.env.BUNDLE_COOLDOWN = "sentinel"; // pre-existing value must be restored
+    const restore = applyCooldownEnv(3);
+    expect(process.env.npm_config_before).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(process.env.UV_EXCLUDE_NEWER).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(process.env.YARN_NPM_MINIMAL_AGE_GATE).toBe(String(3 * 1440));
+    expect(process.env.BUNDLE_COOLDOWN).toBe("3");
+    restore();
+    expect(process.env.npm_config_before).toBeUndefined(); // was unset before → removed
+    expect(process.env.BUNDLE_COOLDOWN).toBe("sentinel"); // was set before → restored
+    delete process.env.BUNDLE_COOLDOWN;
+  });
+});
 
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);

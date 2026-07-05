@@ -331,6 +331,39 @@ async function paths(gh: GitHubClient, ref: RepoRef, base: string, lockName: str
  * edits, no overrides — and report what changed and which OSV advisories that
  * clears. One result per lockfile. v1 covers npm/pnpm, Composer, and Go.
  */
+/**
+ * Delegate cooldown to the package managers that support it natively, by setting
+ * their config via environment. An unrecognized env var is simply ignored, so
+ * this can never break a regen (unlike a wrong CLI flag). Scoped to the lock
+ * refresh pass only — direct security fixes resolve elsewhere and must NOT be
+ * cooled down (policy #1). Covers npm/pnpm/yarn (npm-family), uv (pip), and
+ * bundler (rubygems); cargo/composer/go have no native support yet, so they're
+ * unaffected. Returns a restore function.
+ */
+export function applyCooldownEnv(cooldownDays: number): () => void {
+  if (cooldownDays <= 0) return () => {};
+  const cutoffIso = new Date(Date.now() - cooldownDays * 86_400_000).toISOString();
+  const minutes = String(cooldownDays * 1440);
+  const vars: Record<string, string> = {
+    npm_config_before: cutoffIso.slice(0, 10), // npm: resolve to versions published before the cutoff
+    npm_config_minimum_release_age: minutes, // pnpm (minutes), best-effort
+    YARN_NPM_MINIMAL_AGE_GATE: minutes, // yarn berry (minutes), best-effort
+    UV_EXCLUDE_NEWER: cutoffIso, // uv (RFC3339 timestamp)
+    BUNDLE_COOLDOWN: String(cooldownDays), // bundler (days)
+  };
+  const prev: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(vars)) {
+    prev[k] = process.env[k];
+    process.env[k] = v;
+  }
+  return () => {
+    for (const k of Object.keys(vars)) {
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
+  };
+}
+
 export async function lockRefresh(
   gh: GitHubClient,
   ref: RepoRef,
@@ -339,6 +372,7 @@ export async function lockRefresh(
 ): Promise<LockRefreshResult[]> {
   if (!config.lockRefresh.enabled) return [];
   const out: LockRefreshResult[] = [];
+  const restoreCooldownEnv = applyCooldownEnv(config.safety.cooldownDays);
 
   const enabled = (eco: EcosystemId): boolean => config.ecosystems[eco]?.enabled ?? false;
 
@@ -374,16 +408,20 @@ export async function lockRefresh(
     }
   };
 
-  if (enabled("npm")) {
-    for (const lock of ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"]) {
-      await collect("npm", lock, (dir) => regenNpm(gh, ref, base, dir, lock));
+  try {
+    if (enabled("npm")) {
+      for (const lock of ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"]) {
+        await collect("npm", lock, (dir) => regenNpm(gh, ref, base, dir, lock));
+      }
     }
+    if (enabled("composer")) await collect("composer", "composer.lock", (dir) => regenComposer(gh, ref, base, dir));
+    if (enabled("cargo")) await collect("cargo", "Cargo.lock", (dir) => regenCargo(gh, ref, base, dir));
+    if (enabled("rubygems")) await collect("rubygems", "Gemfile.lock", (dir) => regenRuby(gh, ref, base, dir));
+    if (enabled("pip")) await collect("pip", "uv.lock", (dir) => regenUv(gh, ref, base, dir));
+    if (enabled("gomod")) await collect("gomod", "go.sum", (dir) => regenGo(gh, ref, base, dir));
+  } finally {
+    restoreCooldownEnv();
   }
-  if (enabled("composer")) await collect("composer", "composer.lock", (dir) => regenComposer(gh, ref, base, dir));
-  if (enabled("cargo")) await collect("cargo", "Cargo.lock", (dir) => regenCargo(gh, ref, base, dir));
-  if (enabled("rubygems")) await collect("rubygems", "Gemfile.lock", (dir) => regenRuby(gh, ref, base, dir));
-  if (enabled("pip")) await collect("pip", "uv.lock", (dir) => regenUv(gh, ref, base, dir));
-  if (enabled("gomod")) await collect("gomod", "go.sum", (dir) => regenGo(gh, ref, base, dir));
 
   return out;
 }
